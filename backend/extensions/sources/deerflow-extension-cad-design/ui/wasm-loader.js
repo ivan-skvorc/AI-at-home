@@ -1,5 +1,11 @@
 // Fetch the OpenSCAD WebAssembly asset(s) from the page (host origin), check
 // each against the SHA-256 recorded at build time, join and inflate them.
+//
+// The check must not depend on crypto.subtle: browsers expose it only in
+// secure contexts, and this page is also opened over plain http on a LAN or
+// tailnet address. There the hash is computed in JavaScript (sha256.js).
+
+import { sha256Hex } from "./sha256.js";
 
 export class WasmLoadError extends Error {
   constructor(code) {
@@ -10,6 +16,7 @@ export class WasmLoadError extends Error {
 }
 
 async function sha256(bytes, subtle) {
+  if (!subtle) return sha256Hex(bytes);
   const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
   return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -35,7 +42,7 @@ export async function loadWasm(
     subtle = globalThis.crypto?.subtle,
   } = {},
 ) {
-  if (!info || !Array.isArray(info.files) || !info.files.length || !subtle)
+  if (!info || !Array.isArray(info.files) || !info.files.length)
     throw new WasmLoadError("unavailable");
   const parts = await Promise.all(
     info.files.map(async (file) => {

@@ -7177,6 +7177,13 @@ path to CadQuery, keeps `cad_build`; ordinary chats are untouched.
   infinite loop freezes the page's renders for good; nothing else notices.
 - **The wasm hash check, both of the piece and of the inflated binary.** Dropping
   it still renders; it only stops refusing a tampered or truncated asset.
+- **The hash check works without `crypto.subtle`.** Browsers expose SubtleCrypto
+  only in secure contexts, and this fork is reached at `http://100.x:2026` over a
+  tailnet; a check that required it refused to load OpenSCAD there, so every draft
+  "did not render" whatever the model. `ui/sha256.js` computes the same digest in
+  JavaScript (about 170 ms for the 9 MiB binary). Pinned by `sha256.test.mjs`
+  against `node:crypto`, the no-`subtle` case in `wasm-loader.test.mjs`, and the
+  insecure-origin case in `cad-design.spec.ts`.
 - **The snapshot equals the example.** After any change under `ui/`, rebuild
   (`node build.mjs`), commit `static/dist/` and `ui_manifest.json`, and copy the
   package over the snapshot without `node_modules`, `.venv` or `__pycache__`.
