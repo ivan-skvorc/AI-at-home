@@ -38,3 +38,22 @@ test("a multi-megabyte buffer, the size of the shipped wasm, matches node:crypto
   const bytes = randomBytes(9 * 1024 * 1024 + 3);
   assert.equal(sha256Hex(bytes), reference(bytes));
 });
+
+test("a view into a larger buffer hashes only its own bytes", () => {
+  // A subarray has a non-zero byteOffset; reading the underlying buffer from 0
+  // would hash the wrong bytes and still pass every test above.
+  const backing = randomBytes(1000);
+  for (const [start, end] of [
+    [13, 213],
+    [1, 65],
+    [37, 37],
+    [7, 1000],
+  ]) {
+    const view = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + start,
+      end - start,
+    );
+    assert.equal(sha256Hex(view), reference(view), `bytes ${start}..${end}`);
+  }
+});
