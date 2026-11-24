@@ -170,6 +170,11 @@ export function mountPage(root, context) {
         warnings: result.warnings,
         ms: result.ms,
         engine: isEngineFailure(result.error),
+        // OpenSCAD never started (its wasm did not load or compile), as opposed
+        // to a render that timed out or a Worker that crashed mid-render.
+        startup:
+          typeof result.error === "string" &&
+          (result.error.startsWith("load:") || result.error === "wasm"),
       };
     }
     return {
@@ -244,10 +249,14 @@ export function mountPage(root, context) {
       };
       if (!partial) editor?.markErrors(outcome.errorLines);
       // A partial prefix that fails is expected mid-stream: keep quiet and keep the last mesh.
+      // When the engine itself could not start, say why here: the draft is not
+      // at fault, and the reason otherwise shows only on the Code tab.
       setOverlay(
         partial
           ? text.partial
-          : `${text.renderFailed}. ${viewer?.hasDraft() ? text.lastGood : ""}`,
+          : outcome.startup && outcome.error
+            ? `${text.renderFailed}: ${outcome.error}`
+            : `${text.renderFailed}. ${viewer?.hasDraft() ? text.lastGood : ""}`,
         !partial,
       );
     }

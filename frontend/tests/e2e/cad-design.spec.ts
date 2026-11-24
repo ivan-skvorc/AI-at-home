@@ -14,7 +14,13 @@ import { mockLangGraphAPI } from "./utils/mock-api";
 test.use({
   launchOptions: {
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-    args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
+    args: [
+      "--enable-unsafe-swiftshader",
+      "--use-angle=swiftshader",
+      // A non-localhost name for the test server: a plain-http page there is
+      // not a secure context, like http://100.x:2026 over a tailnet.
+      "--host-resolver-rules=MAP insecure.test 127.0.0.1",
+    ],
   },
 });
 
@@ -274,4 +280,31 @@ test("without WebGL the preview says so and the render is still reported", async
   await expect.poll(() => reported(backend).length).toBe(1);
   expectCube(reported(backend)[0], [20, 20, 20]);
   await expect(page.locator("canvas")).toHaveCount(0);
+});
+
+test("over plain http on a LAN or tailnet name, without crypto.subtle, a draft still renders", async ({
+  page,
+}, testInfo) => {
+  // Browsers expose crypto.subtle only in secure contexts; the wasm check used
+  // to require it, so every render failed at http://100.x:2026.
+  const backend = await setup(page, 1440);
+  backend.seed("Tailnet", CUBE);
+  const insecure = new URL(
+    pageURL,
+    testInfo.project.use.baseURL ?? "http://localhost:3000",
+  );
+  insecure.hostname = "insecure.test";
+  await page.goto(insecure.href);
+  expect(
+    await page.evaluate(() => ({
+      secure: window.isSecureContext,
+      subtle: Boolean(globalThis.crypto?.subtle),
+    })),
+  ).toEqual({ secure: false, subtle: false });
+  await page.getByRole("button", { name: /Tailnet/ }).click();
+  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect.poll(() => reported(backend).length).toBe(1);
+  expectCube(reported(backend)[0], [20, 20, 20]);
 });

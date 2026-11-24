@@ -88,3 +88,33 @@ test("a missing asset and a missing build-time record both fail clearly", async 
     { code: "unavailable" },
   );
 });
+
+test("without crypto.subtle (plain http on a LAN or tailnet address) the bytes are still verified", async () => {
+  // Browsers expose crypto.subtle only in secure contexts. The page reached at
+  // http://100.x:2026 has none, and refusing to load there broke every render.
+  const packed = gzipSync(RAW);
+  const info = {
+    encoding: "gzip",
+    bytes: RAW.length,
+    sha256: sha(RAW),
+    files: [{ path: "./w.wasm", bytes: packed.length, sha256: sha(packed) }],
+  };
+  const { fetchImpl } = served({ "w.wasm": packed });
+  const bytes = await loadWasm(info, {
+    base: "http://100.64.0.1:2026/a/b.mjs",
+    fetchImpl,
+    subtle: null, // what an insecure page has: no SubtleCrypto
+  });
+  assert.deepEqual(bytes, RAW);
+
+  const tampered = Uint8Array.from(packed);
+  tampered[20] ^= 1;
+  await assert.rejects(
+    loadWasm(info, {
+      base: "http://100.64.0.1:2026/a/b.mjs",
+      fetchImpl: served({ "w.wasm": tampered }).fetchImpl,
+      subtle: null, // what an insecure page has: no SubtleCrypto
+    }),
+    { code: "integrity" },
+  );
+});

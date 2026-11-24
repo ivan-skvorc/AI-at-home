@@ -50,6 +50,8 @@ parameters inside Code), and Preview shows a dot when a new render lands.
   access. The Gateway stores the file and never runs it. The first render after the
   page opens downloads the engine (about 2.7 MB) and checks it against a
   fingerprint built into the page; a file that fails the check is not used.
+  This works over plain `http://` on a LAN or tailnet address too, not only on
+  `https://` or `localhost`.
 - **A render has a time limit**: 8 seconds for the live preview, 30 for the
   full render. A file that takes longer is stopped and the page says so. The
   live preview also caps `$fn` at 24, so curves look coarser until the full
