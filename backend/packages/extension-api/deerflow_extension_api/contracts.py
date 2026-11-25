@@ -34,7 +34,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 @dataclass(frozen=True)
 class HostPolicySnapshot:
-    """The limits the host actually enforces, projected for extensions.
+    """The limits the host actually enforces and its sandbox mode, projected for extensions.
 
     A narrow projection instead of the host's AppConfig: exposing AppConfig
     would pin every extension to the harness release cadence. Every field has
@@ -48,6 +48,12 @@ class HostPolicySnapshot:
     budget_warn_fraction: float | None = None
     budget_hard_fraction: float | None = None
     max_subagents_per_run: int | None = None
+    #: True when model-written code runs in a per-thread container whose
+    #: /mnt/user-data is host-backed (the AIO provider in local container mode),
+    #: so a plugin page can read what the run wrote through the host's thread
+    #: file routes. False on the host-local provider, an external or provisioned
+    #: sandbox, and hosts older than API 0.2.15.
+    sandbox_container: bool = False
 
 
 # --- Task lifecycle ---------------------------------------------------------

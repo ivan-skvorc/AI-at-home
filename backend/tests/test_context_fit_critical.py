@@ -181,8 +181,6 @@ def _fresh_request(mode: str, shared_workspace: str = "off", workflow_brief: boo
         if workflow_brief:
             system.extend(notes)
         tools.extend(workflow_tools)
-    # Fork: the CAD module ships installed and enabled (FORK.md §51), so its tool rides every request.
-    tools.extend(_cad_tools())
     model = SimpleNamespace(model="qwen3:8b", num_ctx=32_768, num_predict=8_192)
     return ModelRequest(model=model, messages=[HumanMessage("Summarise what you can do for me.")], system_message=SystemMessage(content="\n\n".join(system)), tools=tools, state={})
 
@@ -257,60 +255,24 @@ def test_a_fresh_request_leaves_room_for_the_conversation_on_a_32k_model(stock_c
     assert sent, f"{mode}: the context guard refused a new chat's first message: {getattr(result, 'content', result)}"
 
 
-def _cad_tools() -> list[dict]:
-    """The CAD module's tool as a model sees it, taken from the extension itself (roadmap item 44)."""
-    from deerflow_extension_cad import install
-
-    from deerflow.extensions.plugin_tools import _model_facing_schema, plugin_tool_name
-
-    contributed: dict = {}
-
-    class Registry:
-        def plugin(self, contribution):
-            contributed["plugin"] = contribution
-            return True
-
-    install(Registry(), {})
-    plugin = contributed["plugin"]
-    return [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
-
-
 @pytest.mark.parametrize("shared_workspace", ["read", "write"])
 def test_the_heaviest_mode_fits_with_every_workflows_option_the_example_documents(stock_config, shared_workspace):
     # config.example.yaml offers shared_workspace "read" and "write"; each lengthens the Ultracode brief.
-    # With the CAD tool on every request, "read" went 17 tokens over the allowance while the stock check,
-    # which only measures the shipped "off", stayed green.
+    # Once, "read" went 17 tokens over the allowance while the stock check, which only measures the
+    # shipped "off", stayed green.
     fixed = _fixed_tokens(_fresh_request("double_ultracode", shared_workspace))
     assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"double_ultracode with shared_workspace={shared_workspace}: ~{fixed:,} fixed tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
 
 
-@pytest.mark.parametrize("mode", list(MODES))
-def test_the_bundled_cad_tool_stays_cheap_on_every_request(stock_config, mode):
-    # The module ships installed, so the stock request above carries its tool in every mode
-    # and on every model. What it costs is what a 32K model loses of its conversation.
-    request = _fresh_request(mode)
-    from deerflow.extensions.plugin_tools import plugin_tool_name
-
-    # Exact: the CAD design page's tool (ext_cad_design_...) shares the prefix and is measured below.
-    cad = [tool for tool in request.tools if isinstance(tool, dict) and tool.get("function", {}).get("name") == plugin_tool_name("cad", "cad_build")]
-    assert len(cad) == 1
-    without_cad = request.override(tools=[tool for tool in request.tools if tool not in cad])
-    cost = _fixed_tokens(request) - _fixed_tokens(without_cad)
-    # The heaviest mode has under 200 tokens to spare on a 32K model, so the tool may not grow.
-    assert 0 < cost <= 150, f"cad_build costs ~{cost:,} tokens of every request; keep its description and schema short"
-
-
 def _cad_design_additions():
-    """The CAD design page's tool and its lead middleware, taken from the extension itself.
+    """The CAD design page's lead middleware, taken from the extension itself.
 
-    The host binds the drafting tool on every request; the middleware removes it
-    from every model call that is not a design run, and on a design run adds the
-    brief and the version note to the system message (roadmap items 61-64).
+    It contributes no model tool. On a design run it appends the design brief to
+    the system message, and one more line when the run has no bash tool; every
+    other model call passes unchanged (FORK.md §58).
     """
     from deerflow_extension_api import AgentBuildContext, AgentScope
     from deerflow_extension_cad_design import install
-
-    from deerflow.extensions.plugin_tools import _model_facing_schema, plugin_tool_name
 
     contributed: dict = {}
 
@@ -322,14 +284,13 @@ def _cad_design_additions():
         def middlewares(self, contributor):
             contributed["contributor"] = contributor
 
-        def routers(self, routers):
+        def service(self, service):
             pass
 
-    install(Registry(), {"enabled": True, "storage_path": "cad-design/designs.sqlite", "max_source_bytes": 65536})
-    plugin = contributed["plugin"]
-    tools = [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
+    install(Registry(), {"enabled": True, "storage_path": "cad-design/designs.sqlite"})
+    assert contributed["plugin"].tools == ()
     (placed,) = contributed["contributor"].contribute_middlewares(None, AgentBuildContext(scope=AgentScope.LEAD, agent_name=None, model_name=MODEL_NAME, policy=None))
-    return tools, placed
+    return placed
 
 
 def _through(placed, request: ModelRequest, context: dict) -> ModelRequest:
@@ -350,41 +311,36 @@ def _through(placed, request: ModelRequest, context: dict) -> ModelRequest:
 @pytest.mark.parametrize("mode", list(MODES))
 def test_the_cad_design_page_adds_nothing_outside_a_design_run(stock_config, mode):
     request = _fresh_request(mode)
-    tools, placed = _cad_design_additions()
-    bound = request.override(tools=[*request.tools, *tools])
+    placed = _cad_design_additions()
     options = {"community.workflows": {"mode": mode}} if mode in ("ultracode", "double_ultracode") else {}
     for context in ({"thread_id": f"critical-{mode}", **MODES[mode]}, {"thread_id": f"critical-{mode}", "plugin_options": options, **MODES[mode]}):
-        sent = _through(placed, bound, context)
+        sent = _through(placed, request, context)
         assert _fixed_tokens(sent) == _fixed_tokens(request), f"{mode}: the CAD design page costs tokens outside a design run"
-    # A design flag the run's own thread does not back is no design run either.
-    forged = {"thread_id": f"critical-{mode}", "plugin_options": {"cad-design": {"design_id": "a" * 32, "phase": "draft"}}, **MODES[mode]}
-    assert _fixed_tokens(_through(placed, bound, forged)) == _fixed_tokens(request)
+    # A design flag the run's own thread does not back is no design run either, even naming a real design.
+    placed.middleware.store.create_design("critical", "a" * 32, "Bracket", f"design-{mode}")
+    forged = {"thread_id": f"critical-{mode}", "plugin_options": {"cad-design": {"design_id": "a" * 32}}, **MODES[mode]}
+    sent = _through(placed, request, forged)
+    assert _fixed_tokens(sent) == _fixed_tokens(request) and sent.system_message.content == request.system_message.content
 
 
-@pytest.mark.parametrize("phase", ["draft", "finalize"])
 @pytest.mark.parametrize("mode", list(MODES))
-def test_a_cad_design_run_fits_in_every_mode(stock_config, mode, phase):
+def test_a_cad_design_run_fits_in_every_mode(stock_config, mode):
     # A design run's context comes from the page's prompt action: the mode's flags and the
     # cad-design options, never the workflows options, so the Ultracode brief is not on it.
-    # The note is at its bound: a long hand edit (cut diff) and a failed render.
-    tools, placed = _cad_design_additions()
-    store = placed.middleware.store
+    # The stock config has no bash tool (host-local provider), so the setup line rides too:
+    # the longest form of the brief.
+    from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
+
+    placed = _cad_design_additions()
     thread = f"design-{mode}"
-    store.create_design("critical", "a" * 32, "Bracket", thread)
-    base = store.add_version("critical", "a" * 32, parent_id=None, source="model", scad="\n".join(f"p{i} = {i}; // [0:1:1000]" for i in range(400)), params={})
-    head = store.add_version("critical", "a" * 32, parent_id=base["id"], source="hand", scad="\n".join(f"p{i} = {i + 1}; // [0:1:1000]" for i in range(400)), params={})
-    store.set_render("critical", "a" * 32, head["id"], {"ok": False, "partial": False, "error": "x" * 4000, "error_lines": list(range(50)), "bbox_mm": [100.0, 100.0, 100.0]})
+    placed.middleware.store.create_design("critical", "a" * 32, "Bracket", thread)
     request = _fresh_request(mode, workflow_brief=False)
-    bound = request.override(tools=[*request.tools, *tools])
-    context = {"thread_id": thread, "plugin_options": {"cad-design": {"design_id": "a" * 32, "head": head["id"], "phase": phase}}, **MODES[mode]}
-    sent = _through(placed, bound, context)
-    assert "## Design page" in sent.system_message.content, "the design brief did not render"
+    context = {"thread_id": thread, "plugin_options": {"cad-design": {"design_id": "a" * 32}}, **MODES[mode]}
+    sent = _through(placed, request, context)
+    assert sent.system_message.content.endswith(DESIGN_BRIEF + "\n\n" + NO_CONTAINER), "the design brief did not render"
+    assert sent.tools == request.tools
     fixed = _fixed_tokens(sent)
-    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode} {phase}: a CAD design run costs ~{fixed:,} fixed tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
-    if phase == "draft":
-        drafting = [tool for tool in sent.tools if isinstance(tool, dict) and tool["function"]["name"] == tools[0]["function"]["name"]]
-        cost = _fixed_tokens(request.override(tools=[*request.tools, *drafting])) - _fixed_tokens(request)
-        assert 0 < cost <= 150, f"scad_draft costs ~{cost:,} tokens of a design run's every request; keep its description and schema short"
+    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode}: a CAD design run costs ~{fixed:,} fixed tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
 
 
 def test_compaction_fires_before_the_guard_would_refuse_a_long_chat(stock_config, monkeypatch):

@@ -550,14 +550,7 @@ if ! $SKIP_INSTALL; then
     # `--all-packages` propagates extras into workspace members (deerflow-harness
     # in particular). Required for postgres extras — see PR #2584.
     # Intentionally unquoted to splat multiple `--extra X` pairs.
-    # Fork: the bundled CAD kernel (group `cad`, FORK.md §51) has wheels for glibc
-    # 2.31 and newer only, which no dependency marker can say. A host it cannot be
-    # installed on keeps starting, without the module; any other failure still stops.
-    (cd backend && uv sync --locked --quiet --all-packages $UV_EXTRAS_FLAGS) || {
-        echo "  ! Dependency sync failed; retrying without the CAD kernel (uv group 'cad')"
-        (cd backend && uv sync --locked --quiet --all-packages --no-group cad $UV_EXTRAS_FLAGS) || { echo "✗ Backend dependency install failed"; exit 1; }
-        echo "  ! Installed without the CAD module. Turn its record off with: make extension-disable NAME=cad"
-    }
+    (cd backend && uv sync --locked --quiet --all-packages $UV_EXTRAS_FLAGS) || { echo "✗ Backend dependency install failed"; exit 1; }
     (cd frontend && "$DEERFLOW_PNPM_PYTHON" "$DEERFLOW_PNPM_RUNNER" install --silent) || { echo "✗ Frontend dependency install failed"; exit 1; }
     echo "✓ Dependencies synced"
 else

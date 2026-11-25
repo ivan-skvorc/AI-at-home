@@ -35,8 +35,6 @@ def test_contract_and_example_changes_trigger_the_package_check(event: str) -> N
     paths = _workflow()["on"][event]["paths"]
     assert "examples/deerflow-extension-*/**" in paths
     assert "backend/packages/extension-api/**" in paths
-    # The CAD package's test_eval_specs.py reads the eval's specs and truth from here.
-    assert "backend/scripts/benchmark/cad_eval/**" in paths
 
 
 def test_package_tests_run_against_the_checkout_contract() -> None:

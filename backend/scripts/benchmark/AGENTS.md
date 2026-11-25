@@ -40,11 +40,3 @@ the tests.
   `analyze_document_text` offline; `agent` mode drives the Gateway over HTTP and
   needs `make dev`. Do not add a second analysis implementation here. Protocol:
   [drift_eval/README.md](drift_eval/README.md).
-- **The CAD eval (`cad_eval/`, fork) scores only a re-measured STEP, never
-  `cad_build`'s `passed`.** Every scored part and every reference part is
-  measured by the CAD module's `measure_cli` through `measuring.py`, and the
-  truth comes from each spec's `reference.py` through `derive_truth.py`.
-  `specs.py`, `score.py` and `measuring.py` import only the standard library,
-  because the CAD package's `test_eval_specs.py` loads them by path in an
-  environment without DeerFlow. Protocol:
-  [docs/guide/cad-eval.md](../../../docs/guide/cad-eval.md).

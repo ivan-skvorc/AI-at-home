@@ -86,14 +86,6 @@ export const extensionCatalog = [
     namespace: "example.notes",
   },
   {
-    key: "cad",
-    package: "deerflow-extension-cad",
-    namespace: "cad",
-    // A fork package: upstream has no such example to link to.
-    guide:
-      "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad#readme",
-  },
-  {
     key: "cadPreview",
     package: "deerflow-extension-cad-preview",
     namespace: "cad-preview",

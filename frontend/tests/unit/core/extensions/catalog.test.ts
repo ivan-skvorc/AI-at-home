@@ -35,9 +35,9 @@ test("catalog covers every bundled extension package even without runtime regist
 test("catalog merge namespaces match the corresponding bundled plugin declarations", () => {
   for (const entry of extensionCatalog) {
     const directory = resolve(process.cwd(), "../examples", entry.package);
-    // A package's own sources only: a local venv (the CAD kernel's lives in
-    // examples/deerflow-extension-cad/.venv), tool caches and node_modules hold
-    // third-party .py files that declare namespaces of their own.
+    // A package's own sources only: a local .venv, tool caches and
+    // node_modules hold third-party .py files that declare namespaces of their
+    // own.
     const namespaces = readdirSync(directory, { recursive: true })
       .filter(
         (path) =>
@@ -294,20 +294,20 @@ test("documentation matches language tags by case-insensitive exact match then l
   }
 });
 
-test("the CAD module is listed before installation and links to this fork's guide", () => {
+test("a fork package is listed before installation and links to this fork's guide", () => {
   for (const [copy, title] of [
-    [enUS.extensions.catalog, "CAD parts"],
-    [zhCN.extensions.catalog, "CAD 零件"],
+    [enUS.extensions.catalog, "CAD model preview"],
+    [zhCN.extensions.catalog, "CAD 模型预览"],
   ] as const) {
     const entry = extensionDirectory([], copy).find(
-      (item) => item.package === "deerflow-extension-cad",
+      (item) => item.package === "deerflow-extension-cad-preview",
     );
     expect(entry).toMatchObject({
-      id: "cad",
+      id: "cad-preview",
       title,
       // Upstream has no such example: its default link would be a 404.
       guide:
-        "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad#readme",
+        "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad-preview#readme",
     });
     expect(entry?.requirements?.length).toBe(2);
     expect(entry?.loaded).toBeUndefined();

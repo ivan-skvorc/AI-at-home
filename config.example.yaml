@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 78
+config_version: 79
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -3579,6 +3579,9 @@ sandbox:
 #   # FROM the pinned tag, name it here, and rebuild it when the pin moves.
 #   # `make sandbox-enable MODE=container` rewrites this section and resets
 #   # `image:` to the stock tag, so set it again afterwards.
+#   # The CAD design page and the cad-modeling skill use the CAD image, built by
+#   # `make sandbox-cad-image` and selected by
+#   # `make sandbox-enable MODE=container IMAGE=cad` (FORK.md §58).
 #   # image: ghcr.io/agent-infra/sandbox:1.11.0
 #
 #   # Optional: Base port for sandbox containers (default: 8080)
@@ -5672,37 +5675,11 @@ plugins:
       timeout_seconds: 14400     # wall time per workflow (ceiling 14400 = 4 h)
       shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
       deliver_results: true      # post a finished result back into its chat
-  # Bundled and on by default: the CAD module (FORK.md §51). Ask any model for a
-  # mechanical part and it calls `cad_build`, which reads a CadQuery script
-  # without running it, measures the result and saves a picture and STEP, STL,
-  # 3MF and GLB files into the conversation. Its source is
-  # examples/deerflow-extension-cad, installed from the locked snapshot in
-  # backend/extensions/sources on Linux and Apple-silicon Macs (Windows and Intel
-  # Macs have no kernel and skip it). The kernel is about 1.7 GB on disk and loads
-  # only while a part is being built. Turn it off with
-  # `make extension-disable NAME=cad`, which keeps this record.
-  - name: cad
-    package: deerflow-extension-cad
-    use: deerflow_extension_cad:install
-    enabled: true
-    required: false
-    config:
-      enabled: true
-      # timeout_seconds: 20      # wall clock for one build, 5 to 25
-      # memory_mb: 4096          # address space for one build, 3072 to 65536
-      # parallel_builds: 2       # builds at once, 1 to 16 (default: half the cores)
-      # printer:                 # your printer, for the print block and print notes; every value optional
-      #   build_volume_mm: [256, 256, 256]  # bed x, bed y, height; 10 to 5000 each; no fit note when unset
-      #   nozzle_mm: 0.4         # 0.1 to 2; a wall under two nozzle widths gets a note
-      #   layer_mm: 0.2          # 0.02 to 1; a vertical gap between bodies under one layer gets a note
-      #   overhang_deg: 45       # 10 to 80, from vertical; overhang past it is reported as needing support
-      #   min_clearance_mm: 0.3  # 0.05 to 3; a gap between bodies under it gets a note (print in place)
-      #   density_g_cm3: 1.24    # 0.5 to 20; grams = volume x density, solid (PLA 1.24, PETG 1.27)
   # Bundled and on by default: the CAD model preview (FORK.md §56). It
-  # draws .glb and .stl files (the CAD module's output among them) as a model you
-  # can rotate, in the artifact panel and the reader. Browser-only: no tool, no
-  # route. Its source is examples/deerflow-extension-cad-preview, installed from the
-  # snapshot in backend/extensions/sources. Turn it off with
+  # draws .glb and .stl files as a model you can rotate, in the artifact panel
+  # and the reader. Browser-only: no tool, no route. Its source is
+  # examples/deerflow-extension-cad-preview, installed from the snapshot in
+  # backend/extensions/sources. Turn it off with
   # `make extension-disable NAME=cad-preview`, which keeps this record.
   - name: cad-preview
     package: deerflow-extension-cad-preview
@@ -5712,12 +5689,15 @@ plugins:
     config:
       enabled: true
   # Bundled and on by default: the CAD design page (FORK.md §58). Designs in
-  # the sidebar opens a page where the assistant drafts a part in OpenSCAD, your
-  # browser renders it (the Gateway never runs model-written code), every render
-  # is kept as a version, and Finalize builds a checked CadQuery part with the
-  # CAD module above. Its `scad_draft` tool reaches design runs only. Its source
-  # is examples/deerflow-extension-cad-design, installed from the snapshot in
-  # backend/extensions/sources. Turn it off with
+  # the sidebar opens a page where the assistant writes a part in OpenSCAD with
+  # the cad-modeling skill, renders and checks it in the conversation's sandbox
+  # container, and the page shows each render as a version: its bodies in 3D,
+  # view images, checks and files. Model-written code runs only in that
+  # per-thread container, never in the Gateway, so the page needs the CAD image:
+  # `make sandbox-cad-image`, then `make sandbox-enable MODE=container IMAGE=cad`,
+  # then restart the Gateway. Without it the page shows those commands. Its
+  # source is examples/deerflow-extension-cad-design, installed from the snapshot
+  # in backend/extensions/sources. Turn it off with
   # `make extension-disable NAME=cad-design`, which keeps this record.
   - name: cad-design
     package: deerflow-extension-cad-design
@@ -5727,4 +5707,3 @@ plugins:
     config:
       enabled: true
       storage_path: cad-design/designs.sqlite  # relative = under DEER_FLOW_HOME (local and Docker alike)
-      max_source_bytes: 65536    # largest OpenSCAD file a version keeps, 1024 to 262144

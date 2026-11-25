@@ -1,19 +1,20 @@
 """A design-page run, end to end, from the page's action to what the model receives (FORK.md §58).
 
 Real: the Gateway app and its lifespan, registration with the session cookie and
-CSRF, the ``plugins:`` records ``config.example.yaml`` ships (workflows, cad,
-cad-preview, cad-design) loaded by the real loader, the plugin action route the
-Designs page calls, the AgentRuns handle it hands the action, run admission, the
-run worker, the lead agent with its whole middleware chain (contributed
-middleware wrapped as the host injects it), the ``scad_draft`` tool and the
-design store. Fake: only the chat model, which records the tools and the system
-message of every call and calls ``scad_draft`` whenever it is offered.
+CSRF, the ``plugins:`` records ``config.example.yaml`` ships (workflows,
+cad-preview, cad-design) loaded by the real loader, the extension services the
+lifespan starts with the projected host policy, the plugin action route the
+Designs page calls, the AgentRuns handle it hands the action, run admission,
+the run worker, the lead agent with its whole middleware chain (contributed
+middleware wrapped as the host injects it) and the design store. Fake: only the
+chat model, which records the tools and the system message of every call.
 
-An owner's design run built the part with ``cad_build`` and the page's preview
-stayed empty. The host's isolation wrapper had dropped the request the
-cad-design middleware hands on, so the drafting brief never reached the model,
-and ``scad_draft`` stayed on every ordinary chat. The middleware's own tests
-called it directly, past the wrapper, and passed.
+An owner's design run once missed its brief: the host's isolation wrapper had
+dropped the request the cad-design middleware handed on, and the middleware's
+own tests called it directly, past the wrapper, and passed. The model renders
+in the design thread's container, so the brief also tells it what to do when
+the run has no bash tool; these runs use the host-local provider, which has
+none unless the operator allows host bash.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ pytestmark = pytest.mark.no_auto_user
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODEL = "fake-test-model"
-SCAD = "w = 30; // [10:1:60]\nd = 20;\nh = 10;\ndifference() {\n  cube([w, d, h]);\n  translate([w / 2, d / 2, h - 5]) cylinder(h = 5.01, r1 = 0, r2 = 2.5, $fn = 48);\n}\n"
 CONFIG = f"""\
 log_level: info
 models:
@@ -58,6 +58,11 @@ run_events:
   backend: memory
 """
 
+LOCAL_SANDBOX = "  use: deerflow.sandbox.local:LocalSandboxProvider\n"
+assert LOCAL_SANDBOX in CONFIG
+#: config.example.yaml's bash entry; the lead agent offers it once host bash is allowed.
+HOST_BASH_TOOL = "tools:\n  - name: bash\n    group: bash\n    use: deerflow.sandbox.tools:bash_tool\n"
+
 #: Every model call of the test: the bound tool names and the system message's text.
 CALLS: list[dict[str, Any]] = []
 
@@ -69,20 +74,8 @@ def _name(tool: Any) -> str | None:
     return getattr(tool, "name", None)
 
 
-def _cad_build() -> str:
-    from deerflow.extensions.plugin_tools import plugin_tool_name
-
-    return plugin_tool_name("cad", "cad_build")
-
-
-def _scad_draft() -> str:
-    from deerflow.extensions.plugin_tools import plugin_tool_name
-
-    return plugin_tool_name("cad-design", "scad_draft")
-
-
 class RecordingModel(BaseChatModel):
-    """Records each call; drafts once with scad_draft when it is offered, then answers."""
+    """Records each call and answers; the design runs here never reach a tool."""
 
     bound: list[str] = []
 
@@ -96,13 +89,7 @@ class RecordingModel(BaseChatModel):
     def _respond(self, messages: list[BaseMessage]) -> ChatResult:
         system = next((message.content for message in messages if isinstance(message, SystemMessage)), "")
         CALLS.append({"tools": list(self.bound), "system": system if isinstance(system, str) else str(system)})
-        drafted = any(message.type == "tool" for message in messages)
-        if not drafted and _scad_draft() in self.bound:
-            call = {"name": _scad_draft(), "args": {"code": SCAD, "note": "Block with a cone"}, "id": "call_scad_1", "type": "tool_call"}
-            answer = AIMessage(content="Drafting the block.", tool_calls=[call])
-        else:
-            answer = AIMessage(content="Done.")
-        return ChatResult(generations=[ChatGeneration(message=answer)])
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="Done."))])
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         return self._respond(messages)
@@ -161,8 +148,12 @@ def _reset_singletons(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A started Gateway with the shipped plugin records, signed in, and its CSRF token."""
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    """A started Gateway with the shipped plugin records, signed in, and its CSRF token.
+
+    Parametrize it indirectly with True to allow host bash, which puts a ``bash``
+    tool on the lead agent the way the container sandbox does.
+    """
     from starlette.testclient import TestClient
 
     from deerflow.extensions import reset_loaded_extensions, reset_runtime_diagnostics
@@ -175,7 +166,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     plugins = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))["plugins"]
     assert {record["name"] for record in plugins} >= {"workflows", "cad-design"}
     config = tmp_path / "config.yaml"
-    config.write_text(CONFIG + yaml.safe_dump({"plugins": plugins}, sort_keys=False), encoding="utf-8")
+    sandbox = CONFIG.replace(LOCAL_SANDBOX, LOCAL_SANDBOX + "  allow_host_bash: true\n") + HOST_BASH_TOOL if getattr(request, "param", False) else CONFIG
+    config.write_text(sandbox + yaml.safe_dump({"plugins": plugins}, sort_keys=False), encoding="utf-8")
     monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config))
     extensions = tmp_path / "extensions_config.json"
     extensions.write_text('{"mcpServers": {}, "skills": {}}', encoding="utf-8")
@@ -239,41 +231,81 @@ def _chat(client, context: dict[str, Any]) -> None:
     assert response.status_code == 200, response.text
 
 
-def test_a_design_prompt_drafts_with_the_brief_and_saves_a_version(client):
-    from deerflow_extension_cad_design.notes import DRAFT_BRIEF
+def _plugin_tools(call: dict[str, Any]) -> list[str]:
+    return [name for name in call["tools"] if name and name.startswith("ext_cad_")]
+
+
+def test_a_design_prompt_brings_the_brief_and_without_bash_the_setup_line(client):
+    from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
 
     design = _action(client, "create_design", {"title": "Block"})["design"]
+    answer = _action(client, "get_design", {"design_id": design["id"]})
+    # The lifespan started the extension's service with the projected host policy: the
+    # host-local provider runs no per-thread container, so the page shows its setup banner.
+    assert (answer["folder"], answer["container"]) == ("/mnt/user-data/outputs/design", False)
+    assert _action(client, "list_designs", {})["container"] is False
+
     started = _action(client, "prompt", {"design_id": design["id"], "text": "A 30 x 20 x 10 mm block with a 5 mm cone on top", "model_name": MODEL, "mode": "flash"})
     assert _settle(client, design["id"], started["run_id"]) == "success"
 
-    assert len(CALLS) == 2, CALLS
-    first, second = CALLS
-    assert _scad_draft() in first["tools"]
-    # Only Finalize builds CadQuery: a draft run that could call cad_build followed the
-    # cad-modeling skill instead of drafting, which is the owner's empty preview.
-    assert all(_cad_build() not in call["tools"] for call in CALLS)
-    assert DRAFT_BRIEF in first["system"], "the drafting brief did not reach the model"
-    assert "No version yet: start the file." in first["system"]
-    # The version note is rebuilt for every call of the run: the draft just saved is the head.
-    assert DRAFT_BRIEF in second["system"]
-    assert "Head: v1 (model). Last render: not reported yet." in second["system"]
+    (call,) = CALLS
+    assert "bash" not in call["tools"]
+    assert DESIGN_BRIEF in call["system"], "the design brief did not reach the model"
+    assert DESIGN_BRIEF + "\n\n" + NO_CONTAINER in call["system"]
+    # The design page contributes no model tool, and the retired CAD module's is gone.
+    assert _plugin_tools(call) == []
+    messages = _action(client, "messages", {"design_id": design["id"]})["messages"]
+    assert [(message["role"], message["text"]) for message in messages] == [("user", "A 30 x 20 x 10 mm block with a 5 mm cone on top"), ("assistant", "Done.")]
 
-    versions = _action(client, "get_design", {"design_id": design["id"]})["versions"]
-    assert [(version["seq"], version["source"], version["scad"]) for version in versions] == [(1, "model", SCAD)]
+
+@pytest.mark.parametrize("client", [True], indirect=True, ids=["host-bash"])
+def test_a_design_run_with_a_shell_gets_the_brief_alone(client):
+    from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
+
+    design = _action(client, "create_design", {"title": "Block"})["design"]
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "model_name": MODEL, "mode": "flash", "viewing": 1, "newest": 2})
+    assert _settle(client, design["id"], started["run_id"]) == "success"
+
+    (call,) = CALLS
+    assert "bash" in call["tools"]
+    assert DESIGN_BRIEF in call["system"] and NO_CONTAINER not in call["system"]
+    (message, _) = _action(client, "messages", {"design_id": design["id"]})["messages"]
+    assert message["text"].startswith("A plate\n\n[Designs page: the user is looking at v1 (/mnt/user-data/outputs/design/v1)")
+
+
+def test_the_owner_reads_a_version_folder_through_the_host_routes_the_page_uses(client):
+    """The design's thread is unlisted and the plugin created it; its owner still lists and opens its outputs."""
+    from deerflow.config.paths import get_paths, make_safe_user_id
+
+    design = _action(client, "create_design", {"title": "Block"})["design"]
+    thread_id = design["thread_id"]
+    user_id = client.get("/api/v1/auth/me").json()["id"]
+    # What cadkit writes in the container, through the thread's host-backed mount.
+    version = get_paths().sandbox_outputs_dir(thread_id, user_id=make_safe_user_id(user_id)) / "design" / "v1"
+    version.mkdir(parents=True)
+    (version / "report.json").write_text('{"bodies": [{"name": "base", "stl": "base.stl"}]}', encoding="utf-8")
+    (version / "base.stl").write_bytes(b"solid base\nendsolid base\n")
+
+    listing = client.get(f"/api/threads/{thread_id}/files", params={"path": "/mnt/user-data/outputs/design"})
+    assert listing.status_code == 200, listing.text
+    assert [(entry["name"], entry["kind"]) for entry in listing.json()["entries"]] == [("v1", "directory")]
+    files = client.get(f"/api/threads/{thread_id}/files", params={"path": "/mnt/user-data/outputs/design/v1"}).json()["entries"]
+    assert sorted(entry["name"] for entry in files) == ["base.stl", "report.json"]
+    report = client.get(f"/api/threads/{thread_id}/artifacts/mnt/user-data/outputs/design/v1/report.json")
+    assert report.status_code == 200 and report.json()["bodies"][0]["stl"] == "base.stl"
 
 
 @pytest.mark.parametrize("forged", [False, True], ids=["plain", "forged-design-flag"])
-def test_an_ordinary_chat_never_receives_the_drafting_tool_or_brief(client, forged):
+def test_an_ordinary_chat_never_receives_the_design_brief(client, forged):
     # A design flag the run's own thread does not back is no design run either.
-    context = {"plugin_options": {"cad-design": {"design_id": "a" * 32, "phase": "draft"}}} if forged else {}
+    context = {"plugin_options": {"cad-design": {"design_id": "a" * 32}}} if forged else {}
     _chat(client, context)
 
     assert CALLS
     for call in CALLS:
-        assert _scad_draft() not in call["tools"]
-        assert _cad_build() in call["tools"]
+        assert _plugin_tools(call) == []
         assert "## Design page" not in call["system"]
-        assert "## Design versions" not in call["system"]
+        assert "no CAD container" not in call["system"]
 
 
 def test_the_ultracode_brief_reaches_the_model(client):

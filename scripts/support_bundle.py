@@ -406,8 +406,7 @@ def collect_thread_summary(project_root: Path, thread_id: str) -> dict[str, Any]
 def collect_doctor_output(project_root: Path) -> dict[str, Any]:
     backend_dir = project_root / "backend"
     cwd = backend_dir if backend_dir.exists() else project_root
-    # Fork: doctor builds a CAD test cube on every install now (up to 55 seconds on a cold disk).
-    return _run_command([sys.executable, str(project_root / "scripts" / "doctor.py")], cwd=cwd, timeout_s=120)
+    return _run_command([sys.executable, str(project_root / "scripts" / "doctor.py")], cwd=cwd, timeout_s=60)
 
 
 def _command_output(command: dict[str, Any] | None) -> str | None:

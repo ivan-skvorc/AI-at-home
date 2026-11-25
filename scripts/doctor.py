@@ -1667,99 +1667,6 @@ def _gpu_residency_result(stats: Mapping[str, Any], nvidia_used=None) -> CheckRe
     return CheckResult("GPU residency", "ok", "card is free")
 
 
-CAD_EXTENSION_ENTRY = "deerflow_extension_cad:"
-CAD_SELFTEST_MODULE = "deerflow_extension_cad.selftest"
-# The self-test loads the kernel first (up to 25 seconds; a few when it is already in
-# the disk cache), then builds a cube (20 seconds at most by default). The module ships
-# enabled, so every `make doctor` runs this; the support bundle allows doctor 120 seconds.
-CAD_SELFTEST_TIMEOUT_SECONDS = 55
-_MISSING_LIBRARY_RE = re.compile(r"(lib[\w.+-]+\.so[\w.]*): cannot open shared object file")
-
-
-def _cad_selftest() -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-m", CAD_SELFTEST_MODULE],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        shell=False,
-        timeout=CAD_SELFTEST_TIMEOUT_SECONDS,
-    )
-
-
-def check_cad_extension(config_path: Path, run=_cad_selftest) -> list[CheckResult]:
-    """Does the installed CAD module actually build a part? (fork feature, FORK.md §51)
-
-    The kernel loads system libraries its wheels do not carry, so a package that
-    is present can still be unable to build: every presence check passes and the
-    first `cad_build` call fails. This builds a one-millimetre cube through the
-    real tool, in a child interpreter because a broken kernel can end the
-    process it is loaded into.
-
-    Skipped, without starting anything, unless `config.yaml` has an enabled CAD
-    entry under `plugins:`. Warn-only, like every optional component here.
-    """
-    label = "CAD module"
-    try:
-        plugins = _load_yaml_file(config_path).get("plugins") or []
-    except Exception:
-        plugins = []
-    records = [entry for entry in plugins if isinstance(entry, dict) and str(entry.get("use", "")).startswith(CAD_EXTENSION_ENTRY)] if isinstance(plugins, list) else []
-    if not records:
-        return [CheckResult(label, "skip", "config.yaml has no CAD record under plugins")]
-    if all(entry.get("enabled", True) is False for entry in records):
-        return [CheckResult(label, "skip", "the CAD module is turned off")]
-
-    # The module ships with the backend (uv group `cad`): a sync installs it, the extension manager does not.
-    fix = "Run `cd backend && uv sync --locked` and restart; to do without the module: make extension-disable NAME=cad"
-    try:
-        result = run()
-    except subprocess.TimeoutExpired:
-        return [CheckResult(label, "warn", f"the test build did not finish within {CAD_SELFTEST_TIMEOUT_SECONDS} seconds", fix=fix)]
-    except OSError as exc:
-        return [CheckResult(label, "warn", f"the test build could not start: {exc}", fix=fix)]
-
-    output = f"{result.stdout or ''}\n{result.stderr or ''}"
-    answer: dict = {}
-    for line in reversed((result.stdout or "").splitlines()):
-        try:
-            parsed = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(parsed, dict):
-            answer = parsed
-            break
-    box = answer.get("bbox_mm")
-    # An exit code of 0 is presence; the measured cube is proof.
-    if result.returncode == 0 and answer.get("ok") is True and isinstance(box, list) and len(box) == 3:
-        size = " x ".join(f"{side:g}" for side in box)
-        return [CheckResult(label, "ok", f"built a test cube: {size} mm in {answer.get('seconds', 0):g} s")]
-
-    missing = _MISSING_LIBRARY_RE.search(output)
-    if missing:
-        library = missing.group(1)
-        return [
-            CheckResult(
-                label,
-                "warn",
-                f"the CAD kernel cannot load: system library {library} is missing",
-                fix=f"Install the system package that provides {library} (Debian and Ubuntu: apt-get install libgl1 for libGL.so.1), then rerun make doctor",
-            )
-        ]
-    if result.returncode < 0:
-        return [CheckResult(label, "warn", f"the CAD kernel stopped on signal {-result.returncode} while building a test cube", fix=fix)]
-    if "No module named 'deerflow_extension_cad'" in output:
-        # Windows, an Intel Mac, or a Linux whose C library the kernel has no wheels for.
-        return [CheckResult(label, "warn", "the CAD module is not installed on this host", fix="Turn its record off: make extension-disable NAME=cad (or run `cd backend && uv sync --locked` if this host should have it)")]
-    detail = str(answer.get("error") or "").strip() or (result.stderr or "").strip().splitlines()[-1:] or "the test build returned no measured part"
-    detail = detail if isinstance(detail, str) else detail[0]
-    if "still loading" in detail:
-        return [CheckResult(label, "warn", "the CAD kernel was still loading when the test build ran out of time", fix="Run make doctor again: the first load after an install or a restart is the slow one")]
-    return [CheckResult(label, "warn", f"the test build failed: {detail}", fix=fix)]
-
-
 def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:
     """Report the *effective* network exposure of each entry surface (fork feature).
 
@@ -1902,9 +1809,6 @@ def main() -> int:
 
     # ── Local media generation ───────────────────────────────────────────────
     sections.append(("Local Media", check_media_generation(config_path)))
-
-    # ── Installed extensions ─────────────────────────────────────────────────
-    sections.append(("Extensions", check_cad_extension(config_path)))
 
     # ── Deployment exposure ──────────────────────────────────────────────────
     sections.append(("Deployment", check_deployment_exposure(project_root)))

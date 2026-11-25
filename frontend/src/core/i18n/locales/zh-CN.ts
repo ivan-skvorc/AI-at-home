@@ -196,7 +196,6 @@ export const zhCN: Translations = {
       lightrag: bundledCopy("deerflow-extension-lightrag", "zh-CN"),
       weknora: bundledCopy("deerflow-extension-weknora", "zh-CN"),
       example: bundledCopy("deerflow-extension-example", "zh-CN"),
-      cad: bundledCopy("deerflow-extension-cad", "zh-CN"),
       cadPreview: bundledCopy("deerflow-extension-cad-preview", "zh-CN"),
       cadDesign: bundledCopy("deerflow-extension-cad-design", "zh-CN"),
     },
