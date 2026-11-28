@@ -24,8 +24,8 @@ images, its checks and its files.
   `/mnt/user-data/workspace/design/model.scad` in place, and every
   `cadkit.py render --design /mnt/user-data/outputs/design --print-layout` writes
   the next `v<N>/` (the `.scad`, one STL per body, `assembly.glb`,
-  `report.json`, `views/`, `print/`, and after export the STEP files and
-  `bodies.3mf`). The page lists and reads those folders through the host's
+  `report.json` and `print/`; `check`, `views` and `export` then add
+  `check.json`, `views/`, the STEP files and `bodies.3mf` to it). The page lists and reads those folders through the host's
   thread file routes (`context.threadFiles`, outputs only, owner-checked,
   usable while a run streams), shows the newest by default, and lists them again
   on each tool result and when the run settles.
@@ -38,8 +38,8 @@ images, its checks and its files.
   (`prompt` with `viewing` and `newest`).
 - **The chat's model picker, mode and effort.** The composer row holds the
   host's composer controls (`context.composerControls`): the same searchable,
-  sorted model picker, mode menu (Flash to Double Plus Ultracode; Democracy
-  starts from its own dialog) and reasoning-effort menu as the chat, with the
+  sorted model picker, mode menu (Flash to Double Plus Ultracode; Democracy is not offered,
+  because a panel needs the New-chat dialog's roster, and a remembered Democracy is sent as Ultra) and reasoning-effort menu as the chat, with the
   choice kept per page in this browser. Each prompt sends their `runContext()`
   as `context`; `prompt` keeps only the keys the chat sends (model, mode,
   thinking, plan mode, subagents and their limits, effort, Democracy roster,

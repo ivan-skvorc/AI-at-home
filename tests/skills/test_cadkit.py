@@ -871,3 +871,23 @@ def test_a_body_rebuilt_in_cadquery_is_proven_and_joins_the_zip(tmp_path, capsys
     # A 3MF holds both bodies: compare takes one solid per file.
     code, _, err = run(capsys, "compare", version / "a.stl", version / "bodies.3mf")
     assert code == 2 and "holds 2 bodies" in err
+
+
+def test_non_finite_pose_numbers_cannot_pass_a_check(tmp_path):
+    """NaN or inf in poses.json would place nothing or hide every overlap: refused as could-not-run."""
+    bodies = ["a", "b"]
+    cases = [
+        {"poses": [{"name": "swing", "sweep": {"body": "a", "axis": [0, 0, 1], "from": "nan", "to": 10}}]},
+        {"poses": [{"name": "swing", "sweep": {"body": "a", "axis": [0, 0, 1], "from": 0, "to": float("inf")}}]},
+        {"poses": [{"name": "swing", "sweep": {"body": "a", "direction": [1, 0, 0], "from": 0, "to": 5, "steps": 2.5}}]},
+        {"poses": [{"name": "seated"}], "tolerance_mm3": "inf"},
+        {"poses": [{"name": "seated"}], "tolerance_mm3": -1},
+    ]
+    for index, data in enumerate(cases):
+        path = tmp_path / f"poses{index}.json"
+        path.write_text(json.dumps(data))
+        with pytest.raises(cadkit.Unusable):
+            poses = cadkit._read_poses(path, bodies)
+            for pose in poses["poses"]:
+                if pose.get("sweep"):
+                    cadkit._sweep_values(pose["sweep"], "test")

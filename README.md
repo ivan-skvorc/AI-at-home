@@ -336,7 +336,7 @@ Then restart the app. For a private repo, set `GITHUB_TOKEN` in `.env` (scoped t
 - `extra_capabilities: [SYS_PTRACE]` — allow `gdb`/`strace` to attach for native debugging.
 - `idle_timeout` — keep a warmed-up debug environment alive longer between the agent's turns. `make config`, `make sandbox-enable MODE=container` and `make setup` all write `idle_timeout: 3600` and `bash_command_timeout: 1800`.
 - `devices: [/dev/kvm]` — forward the host's KVM device so a virtual machine inside the sandbox is hardware-accelerated. Off by default; `/dev/kvm` is the only value accepted, anything else fails config validation, and the container is never run `--privileged`. Read the next paragraphs before setting it.
-- `image` — a custom sandbox image, built `FROM` the pinned tag, for system packages the agent cannot install at run time (QEMU, for one). `make sandbox-enable MODE=container` rewrites the sandbox section and resets `image:` and `devices:`, so set them again afterwards. The one image this repository ships is the CAD image for the [CAD design page](#cad-design-page): `make sandbox-cad-image` builds it, and `make sandbox-enable MODE=container IMAGE=cad` selects it.
+- `image` — a custom sandbox image, built `FROM` the pinned tag, for system packages the agent cannot install at run time (QEMU, for one). Switching to container mode from another mode, `make sandbox-enable MODE=container` writes a fresh sandbox section, so set `devices:` and a custom `image:` again afterwards; when the section is already in container mode it changes only the `image:` line (back to the stock tag, or to the CAD image with `IMAGE=cad`), so `devices:` and your other keys stay and only a custom `image:` has to be set again. The one image this repository ships is the CAD image for the [CAD design page](#cad-design-page): `make sandbox-cad-image` builds it, and `make sandbox-enable MODE=container IMAGE=cad` selects it.
 
 The bundled **`repo-runner` skill** walks the agent through the whole loop (clone → detect toolchain → install in an isolated venv → run/debug → report the exact commands). Invoke it with `/repo-runner <github-url and what to do>`. It checks `id -u` first and carries on as an unprivileged user, skipping `apt-get` and `sudo`; it stops only when the sandbox has host bash disabled.
 
@@ -1389,8 +1389,8 @@ own colour with a show and hide switch, with the shaded render and sections, a
 summary of every check, the read-only `model.scad` and download links. STEP and
 3MF are exported when you ask for files. Writing while an older version is
 selected tells the assistant which one you are looking at. **Every figure is a
-check on the model, not on a print**: the STEP is faceted (written from the
-mesh), OpenSCAD 2021.01 renders curved booleans slowly, the container has 2 GiB
+check on the model, not on a print**: the export STEP is faceted (written from the
+mesh) unless you ask for an editable one, which the assistant rebuilds in CadQuery and proves against the body, OpenSCAD 2021.01 renders curved booleans slowly, the container has 2 GiB
 of memory by default (`DEER_FLOW_SANDBOX_MEMORY=4g` for big STEP exports), and
 `text()` has only the DejaVu and Liberation fonts. Designs are per user and stay
 out of the chat list; deleted ones go to a Trash in the page, and **Delete

@@ -263,8 +263,7 @@ as an `ArrayBuffer` through `GET /api/threads/{threadId}/artifacts/<path>`, at m
 `<img>`, each path segment encoded. Both routes are owner-checked by the Gateway and
 work while a run is active. The thread identifier must match `^[A-Za-z0-9_-]{1,128}$`
 and the path must be `/mnt/user-data/outputs` or below it, without `.`, `..` or empty
-segments, backslashes or control characters; anything else is refused before a
-request is made, so a page cannot reach uploads, the workspace or another route. A
+segments, backslashes or control characters; anything else is refused before a request is made, so the helper never asks for uploads, the workspace or another route. It guards the helper, not the data: both routes confine a path to the thread's `/mnt/user-data` and follow links, so a link a run left under `outputs/` is listed and read as its target, and page code runs with the user's session like any administrator-installed package. A
 failed request rejects with an `Error` whose `status` is the HTTP status (404 for a
 folder or file that does not exist yet, 413 over `maxBytes`). The page signal (and the
 optional caller signal) aborts pending reads. Everything in an outputs folder may be
@@ -302,6 +301,11 @@ the chat. `onChange(runContext)` runs each time the selection changes; an except
 it throws stays in the page. `dispose()` unmounts the controls and removes their
 element, and the page's unmount disposes any still mounted. Older hosts omit
 `composerControls`: show no model choice and let the server default apply.
+
+Since extension API 0.2.15, `HostPolicySnapshot.sandbox_container` (on
+`ExtensionRuntimeDeps.policy` and `AgentBuildContext.policy`) is true when the host
+runs per-thread AIO containers, the only mode in which a run's shell writes into the
+thread's own host-backed outputs.
 
 A thread whose metadata has `deerflow_listed: false` is left out of the chat lists
 in the sidebar and the chats page, like Side Chat threads, because an extension page

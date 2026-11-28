@@ -330,9 +330,12 @@ def _sweep_values(sweep: dict, where: str) -> list[float]:
         start, stop = float(sweep["from"]), float(sweep["to"])
     except (KeyError, TypeError, ValueError) as exc:
         raise Unusable(f"{where}: a sweep needs numbers from and to.") from exc
-    steps = int(sweep.get("steps", 12))
-    if not 1 <= steps <= MAX_SWEEP_STEPS:
-        raise Unusable(f"{where}.steps must be 1..{MAX_SWEEP_STEPS}.")
+    # NaN or inf would place every body nowhere, and the check would pass states it never evaluated.
+    if not (math.isfinite(start) and math.isfinite(stop)):
+        raise Unusable(f"{where}: from and to must be finite numbers.")
+    steps = sweep.get("steps", 12)
+    if isinstance(steps, bool) or not isinstance(steps, int) or not 1 <= steps <= MAX_SWEEP_STEPS:
+        raise Unusable(f"{where}.steps must be a whole number 1..{MAX_SWEEP_STEPS}.")
     if steps == 1:
         return [start]
     return [start + (stop - start) * i / (steps - 1) for i in range(steps)]
@@ -383,6 +386,10 @@ def _read_poses(path: Path | None, bodies: list[str]) -> dict:
     if not isinstance(ignore, list) or not all(isinstance(p, list) and len(p) == 2 and all(b in bodies for b in p) for p in ignore):
         raise Unusable(f'{path}: ignore is a list of body pairs, like [["pin", "base"]].')
     data.setdefault("tolerance_mm3", 0.01)
+    tolerance = data["tolerance_mm3"]
+    # A non-finite tolerance would hide every overlap.
+    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not math.isfinite(tolerance) or tolerance < 0:
+        raise Unusable(f"{path}: tolerance_mm3 is a finite number of mm3, 0 or more, like 0.01.")
     data["ignore"] = ignore
     return data
 

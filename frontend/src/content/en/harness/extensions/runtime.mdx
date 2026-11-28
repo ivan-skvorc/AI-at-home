@@ -157,6 +157,7 @@ counts.increment()
 | `budget_warn_fraction`  | `token_budget.warn_threshold`                    | `None`           |
 | `budget_hard_fraction`  | `token_budget.hard_stop_threshold`               | `None`           |
 | `max_subagents_per_run` | The effective per-run delegation total for the Lead Agent | `None` for subagents |
+| `sandbox_container` | True when `sandbox.use` is the AIO provider in local container mode (no `base_url`, no `provisioner_url`), so runs have per-thread containers with host-backed `/mnt/user-data` | `False` (also on hosts older than 0.2.15) |
 
 The five token fields are `None` whenever the token budget is disabled. A subagent's build context projects the subagent budget (`subagents.token_budget`, or the per-agent override when one is configured) instead of the Lead Agent's.
 

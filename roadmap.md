@@ -1411,12 +1411,9 @@ window, is the computer-use surface this file already declines.
 has the model write OpenSCAD: one parametric file draws every body, `openscad` renders each
 body alone, and the meshes are what the checks measure. Its costs are accepted: no true
 fillets or chamfers, meshes rather than an exact solid, and no analytic holes to measure.
-CadQuery's kernel stays in the image only to write STEP from those meshes, so the STEP is
-faceted, good for checking a fit in a CAD program and not for editing features. A second
-authoring language would double the skill and its checks. build123d has no head-to-head
+CadQuery's kernel stays in the image to write the export STEP from those meshes, which is faceted (good for checking a fit in a CAD program, not for editing features), and for one opt-in step: when the user wants a STEP to edit, the model rebuilds that body in CadQuery as `<body>-cq.step`, and `cadkit.py compare` proves it against the OpenSCAD body (symmetric difference under 1% of the volume) before it joins the zip. Every check still runs on the OpenSCAD meshes; a second language for the whole loop would double the skill and its checks. build123d has no head-to-head
 result over CadQuery and less training data behind it, and 0.13 needs OCP 8 where the
-image's CadQuery 2.7.0 runs on OCP 7.8, so the two cannot share a kernel. An exact STEP, if
-it is ever wanted, is argued on its own.
+image's CadQuery 2.7.0 runs on OCP 7.8, so the two cannot share a kernel. 
 
 **STEP preview in the browser.** The CAD model preview (FORK.md §56) was once planned with
 a second step that read STEP files through an OpenCascade WebAssembly build. `occt-import-js.wasm` is 7,604,031
