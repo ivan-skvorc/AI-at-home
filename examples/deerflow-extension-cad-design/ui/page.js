@@ -264,6 +264,7 @@ export function mountPage(root, context) {
     const n = Number(versionSelect.value);
     if (!S.versions.includes(n)) return;
     S.follow = n === newest();
+    S.selected = n;
     renderViewing();
     showVersion(n);
   });
@@ -354,21 +355,21 @@ export function mountPage(root, context) {
 
   /** The setup commands, shown while the host runs no sandbox containers. */
   function renderBanner() {
-    for (const slot of [listBanner, designBanner]) {
-      slot.replaceChildren();
-      if (S.container) continue;
-      const banner = element("div", "notice info banner");
-      banner.setAttribute("role", "status");
-      const commands = element("pre");
-      commands.textContent = text.container.commands.join("\n");
-      banner.append(
-        element("strong", "", text.container.title),
-        element("p", "", text.container.body),
-        commands,
-        element("p", "", text.container.after),
-      );
-      slot.append(banner);
-    }
+    listBanner.replaceChildren();
+    designBanner.replaceChildren();
+    if (S.container) return;
+    const banner = element("div", "notice info banner");
+    banner.setAttribute("role", "status");
+    const commands = element("pre");
+    commands.textContent = text.container.commands.join("\n");
+    banner.append(
+      element("strong", "", text.container.title),
+      element("p", "", text.container.body),
+      commands,
+      element("p", "", text.container.after),
+    );
+    // Only in the view on screen, so the page holds one copy of the commands.
+    (S.design ? designBanner : listBanner).append(banner);
   }
 
   function setOverlay(message, isError = false) {
@@ -748,6 +749,8 @@ export function mountPage(root, context) {
     return remember(models, key, pending);
   }
 
+  // The run whose final listing is in flight: it may still bring the first new version.
+  let settling = null;
   let refreshTimer = 0;
   let refreshing = null;
   let refreshAgain = false;
@@ -793,12 +796,20 @@ export function mountPage(root, context) {
     S.versions = versionNumbers(entries ?? []);
     if (newest() > before && S.narrow && S.phone !== "preview")
       phoneDot.hidden = false;
+    // A run's first new version is shown even when the user was looking at an
+    // older one: that is the answer to what they just asked.
+    const run = S.run ?? settling;
+    if (run && !run.jumped && newest() > run.newestBefore) {
+      run.jumped = true;
+      S.follow = true;
+    }
     const n = pickVersion(S.versions, {
       selected: S.selected,
       follow: S.follow,
     });
     renderPicker(n);
     renderViewing();
+    renderPlaceholder();
     await showVersion(n);
   }
 
@@ -869,6 +880,12 @@ export function mountPage(root, context) {
       } catch {
         if (token !== loadToken || signal.aborted) return;
         loaded.failed.add(body.name);
+        // An older version's mesh of the same name must not stand in for it.
+        viewer?.keep(
+          shown
+            .filter((other) => !loaded.failed.has(other.name))
+            .map((other) => other.name),
+        );
         renderBodies();
         continue;
       }
@@ -953,7 +970,8 @@ export function mountPage(root, context) {
         item.append(element("span", "meta error", text.open));
       if (body.error)
         item.append(element("span", "meta error", text.bodyFailed(body.error)));
-      else if (!body.file) item.append(element("span", "meta error", text.noStl));
+      else if (!body.file)
+        item.append(element("span", "meta error", text.noStl));
       else if (loaded.failed.has(body.name))
         item.append(element("span", "meta error", text.bodyUnreadable));
       bodyList.append(item);
@@ -1023,7 +1041,7 @@ export function mountPage(root, context) {
     checksPanel.replaceChildren();
     const loaded = S.loaded;
     if (!loaded) {
-      checksPanel.append(element("p", "muted pad", text.noVersion));
+      checksPanel.append(element("p", "muted pad", text.noChecks));
       return;
     }
     const c = text.checks;
@@ -1054,7 +1072,8 @@ export function mountPage(root, context) {
         render.append(element("p", "", c.warnings));
         render.append(bullets(summary.warnings));
       }
-      if (summary.echo) render.append(element("p", "muted", c.echo(summary.echo)));
+      if (summary.echo)
+        render.append(element("p", "muted", c.echo(summary.echo)));
     }
 
     const collisions = section(c.collisions);
@@ -1079,7 +1098,8 @@ export function mountPage(root, context) {
             ),
           ),
         );
-      if (check.more) collisions.append(element("p", "muted", c.more(check.more)));
+      if (check.more)
+        collisions.append(element("p", "muted", c.more(check.more)));
     }
 
     const printing = section(c.print);
@@ -1221,7 +1241,11 @@ export function mountPage(root, context) {
       if (!body.trim()) return null;
       const node = element("details", "msg tool");
       node.append(
-        element("summary", "", text.toolResult(String(message.tool_name ?? ""))),
+        element(
+          "summary",
+          "",
+          text.toolResult(String(message.tool_name ?? "")),
+        ),
         element("pre", "", body),
       );
       return node;
@@ -1399,8 +1423,7 @@ export function mountPage(root, context) {
         }
       } catch {
         if (controller.signal.aborted) return;
-        if (run.streamed)
-          setNotice(designNotice, text.errors.stream, "info");
+        if (run.streamed) setNotice(designNotice, text.errors.stream, "info");
       }
     }
     if (controller.signal.aborted) return;
@@ -1450,7 +1473,9 @@ export function mountPage(root, context) {
     run.controller.abort();
     cancel(refreshTimer);
     renderRunState();
+    settling = run;
     await refresh();
+    settling = null;
     if (S.design?.id !== run.designId) return;
     if (run.state.error)
       setNotice(

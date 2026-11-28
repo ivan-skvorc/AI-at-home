@@ -67,7 +67,8 @@ the existing positional rollback and source attribution.
   ordinary host tool assembly, including group filtering and later authorization.
   A tool that works on this machine only declares `group="local_extensions"`, the
   group classified as safe with the internet switch off (the switch does not yet
-  filter plugin tools at all, FORK.md §51); `media` means the local ComfyUI
+  filter plugin tools at all; see the generic `local_extensions` group in FORK.md
+  §27); `media` means the local ComfyUI
   service and is not reused. A custom agent with a tool-group list offers a plugin tool only
   when the list names its group.
 - `SettingsField` describes a non-secret deployment value. There is no online override
@@ -249,6 +250,26 @@ closing the stream does not cancel the run. The page signal (and the optional ca
 signal) ends the stream and rejects the iterator; a failed response rejects with its
 status, and an event over 16 MiB stops the stream. It does not resume after a dropped
 connection; poll the run's status through a backend action and join again.
+
+The optional `threadFiles` helper reads what a thread's runs wrote under
+`/mnt/user-data/outputs/`, for example the files a run renders in its sandbox
+container. `list(threadId, virtualPath, { signal? })` returns one folder's entries
+`{ name, path, kind, size, modified_at }`, directories first, with links reported as
+`"symlink"` and never followed; it uses the host's `GET /api/threads/{threadId}/files`
+route. `read(threadId, virtualPath, { signal?, maxBytes? })` returns the file's bytes
+as an `ArrayBuffer` through `GET /api/threads/{threadId}/artifacts/<path>`, at most
+`maxBytes` (default and ceiling 25 MiB) even when the response has no length.
+`url(threadId, virtualPath, { download? })` returns that artifact URL for a link or an
+`<img>`, each path segment encoded. Both routes are owner-checked by the Gateway and
+work while a run is active. The thread identifier must match `^[A-Za-z0-9_-]{1,128}$`
+and the path must be `/mnt/user-data/outputs` or below it, without `.`, `..` or empty
+segments, backslashes or control characters; anything else is refused before a
+request is made, so a page cannot reach uploads, the workspace or another route. A
+failed request rejects with an `Error` whose `status` is the HTTP status (404 for a
+folder or file that does not exist yet, 413 over `maxBytes`). The page signal (and the
+optional caller signal) aborts pending reads. Everything in an outputs folder may be
+model-written: parse it as untrusted input and render text with `textContent`. Older
+hosts omit `threadFiles`.
 
 The optional `models` context value is the host's current model list,
 `{ list: [{ name, display_name? }], defaultName? }`, where `defaultName` is the

@@ -2,10 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 
 import {
   DesignBackend,
-  gatewayRequests,
+  FOLDER,
   mockCadDesign,
+  RENDER_COMMAND,
   TEXT_ANSWER,
-  type Render,
 } from "./utils/cad-design";
 import { mockLangGraphAPI } from "./utils/mock-api";
 
@@ -14,29 +14,11 @@ import { mockLangGraphAPI } from "./utils/mock-api";
 test.use({
   launchOptions: {
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-    args: [
-      "--enable-unsafe-swiftshader",
-      "--use-angle=swiftshader",
-      // A non-localhost name for the test server: a plain-http page there is
-      // not a secure context, like http://100.x:2026 over a tailnet.
-      "--host-resolver-rules=MAP insecure.test 127.0.0.1",
-    ],
+    args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
   },
 });
 
-// The real OpenSCAD wasm loads, compiles and renders in each test.
-test.describe.configure({ timeout: 120_000 });
-
 const pageURL = "/workspace/extensions/cad-design/designs";
-const CUBE = "width = 20; // [10:1:60]\ncube([width, 20, 20]);\n";
-const rendered: Render = {
-  ok: true,
-  partial: false,
-  bbox_mm: [20, 20, 20],
-  volume_mm3: 8000,
-  manifold: true,
-  triangles: 12,
-};
 
 async function setup(
   page: Page,
@@ -67,25 +49,17 @@ async function setup(
   return backend;
 }
 
-const reported = (backend: DesignBackend) =>
-  backend
-    .calledWith("report_render")
-    .map(({ payload }) => payload.render as Render);
+const prompt = (page: Page) =>
+  page.getByRole("textbox", { name: /Describe the part/ });
+const send = (page: Page) =>
+  page.getByRole("button", { name: "Send", exact: true }).click();
+const tab = (page: Page, name: string) =>
+  page.getByRole("tab", { name, exact: true });
 
-function expectCube(render: Render | undefined, size: number[]) {
-  expect(render?.ok).toBe(true);
-  expect(render?.manifold).toBe(true);
-  expect(render?.triangles).toBe(12);
-  render!.bbox_mm!.forEach((value, axis) =>
-    expect(Math.abs(value - size[axis]!)).toBeLessThan(1e-3),
-  );
-}
-
-test("a prompt streams a draft that the browser renders, and a slider redraws without the Gateway", async ({
+test("a prompt streams the run and the preview shows the new version's bodies, views, checks, code and files", async ({
   page,
 }) => {
   const backend = await setup(page, 1440);
-  backend.draft = CUBE;
   await page.goto(pageURL);
 
   // The full layout: no host heading or max-width column; the surface fills
@@ -98,162 +72,182 @@ test("a prompt streams a draft that the browser renders, and a slider redraws wi
   await expect(
     page.getByRole("link", { name: "Designs", exact: true }),
   ).toHaveAttribute("href", pageURL);
+  await expect(page.getByText("make sandbox-cad-image")).toHaveCount(0);
 
   await page.getByRole("button", { name: "New design" }).click();
   await expect(
     page.getByText("Untitled design", { exact: true }),
   ).toBeVisible();
-  expect(backend.calledWith("create_design")).toHaveLength(1);
+  await expect(page.getByText(/^No version yet/)).toBeVisible();
 
-  const prompt = page.getByRole("textbox", { name: /Describe the part/ });
-  await prompt.fill("A 20 mm cube with a width parameter");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await prompt(page).fill("A 60 x 40 mm plate with a peg");
+  await send(page);
 
-  // The mocked stream's scad_draft call renders in the real OpenSCAD Worker.
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
-  await expect.poll(() => reported(backend).length).toBe(1);
-  expectCube(reported(backend)[0], [20, 20, 20]);
-  const [version] = backend.versions;
-  expect(backend.calledWith("report_render")[0]!.payload.version_id).toBe(
-    version!.id,
+  // The stream's bash call and its result: the folder is listed again and
+  // the new version's bodies come from report.json and their STL files.
+  await expect(page.getByRole("combobox", { name: "Version" })).toHaveValue(
+    "1",
   );
-  expect(backend.calledWith("prompt")[0]!.payload).toMatchObject({
-    text: "A 20 mm cube with a width parameter",
-  });
-  await expect(page.getByText("Here is a first draft.")).toBeVisible();
-  await expect(page.locator("canvas")).toBeVisible();
-
-  // The run settled: the composer is back and the version is listed.
-  await expect(prompt).toBeEnabled();
-  // The draft came from the joined stream, not from the reload that settles
-  // the run: the page reported it before it reloaded the design.
-  const order = backend.calls.map(({ action }) => action);
-  expect(order.indexOf("report_render")).toBeGreaterThan(
-    order.indexOf("prompt"),
-  );
-  expect(order.indexOf("report_render")).toBeLessThan(
-    order.lastIndexOf("get_design"),
-  );
-  await page.getByRole("tab", { name: "Versions" }).click();
+  const bodies = page.getByRole("list", { name: "Bodies" });
+  await expect(bodies.getByText("plate", { exact: true })).toBeVisible();
+  await expect(bodies.getByText("peg", { exact: true })).toBeVisible();
+  await expect(bodies.getByText(/^60 × 40 × 6 mm/)).toBeVisible();
+  await expect(bodies.getByText(/^10 × 10 × 21 mm/)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /v1.*rendered/ }),
+    page.getByText("v1 · 2 bodies · rendered in 2.5 s"),
+  ).toBeVisible();
+  await expect(page.locator("canvas")).toBeVisible();
+  expect(backend.calledWith("prompt")[0]!.payload).toMatchObject({
+    text: "A 60 x 40 mm plate with a peg",
+    mode: "flash",
+  });
+  expect(backend.calledWith("prompt")[0]!.payload.viewing).toBeUndefined();
+  await expect.poll(() => backend.fileRequests).toContain(`list ${FOLDER}`);
+  await expect
+    .poll(() => backend.fileRequests)
+    .toContain(`read ${FOLDER}/v1/plate.stl`);
+  await expect
+    .poll(() => backend.fileRequests)
+    .toContain(`read ${FOLDER}/v1/peg.stl`);
+  // Both STLs parsed in the Worker and drawn: the loading note is gone and no
+  // body says it could not be shown.
+  await expect(page.getByText("Loading v1…")).toHaveCount(0);
+  await expect(bodies.getByText("could not be shown")).toHaveCount(0);
+
+  // The run settled: the composer is back and the history shows the call.
+  await expect(prompt(page)).toBeEnabled();
+  await expect(page.getByText("v1 is ready.")).toBeVisible();
+  await expect(page.getByText(`bash: ${RENDER_COMMAND}`)).toBeVisible();
+
+  // A body can be hidden.
+  const peg = page.getByRole("checkbox", { name: "Show peg" });
+  await peg.uncheck();
+  await expect(peg).not.toBeChecked();
+
+  await tab(page, "Views").click();
+  const shaded = page.getByRole("img", { name: "Rendered view shaded.png" });
+  await expect(shaded).toBeVisible();
+  expect(await shaded.getAttribute("src")).toContain(
+    "/artifacts/mnt/user-data/outputs/design/v1/views/shaded.png",
+  );
+  await expect(
+    page.getByRole("img", { name: "Rendered view sections.png" }),
   ).toBeVisible();
 
-  // Dragging a slider renders locally: no request reaches the Gateway.
-  await page.getByRole("tab", { name: "Parameters" }).click();
-  const slider = page.getByRole("slider", { name: "width" });
-  await expect(slider).toBeEnabled();
-  const requests = gatewayRequests(page.context());
-  await slider.evaluate((input: HTMLInputElement) => {
-    input.value = "40";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await page.getByRole("tab", { name: "Preview" }).click();
-  await expect(page.getByText("40 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
-  expect(requests).toEqual([]);
+  await tab(page, "Checks").click();
+  await expect(page.getByText("Rendered in 2.5 s.")).toBeVisible();
+  await expect(
+    page.getByText("peg: WARNING: Ignoring unknown variable 'wal'"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("13 states checked, 1 overlap, clearance 0.3 mm."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("swing [peg=30]: peg / plate 1.25 mm³"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("peg: bridge spans 14 mm (> 10) at x 0..14"),
+  ).toBeVisible();
+  await expect(page.getByText(/^Slicer: 21\.3 g, 1h 2m/)).toBeVisible();
 
-  // Releasing it saves one slider version, which is rendered and reported.
-  await page.getByRole("tab", { name: "Parameters" }).click();
-  await slider.dispatchEvent("change");
-  await expect.poll(() => backend.calledWith("save_version").length).toBe(1);
-  expect(backend.calledWith("save_version")[0]!.payload).toMatchObject({
-    source: "slider",
-    parent_id: version!.id,
-    scad: CUBE.replace("width = 20;", "width = 40;"),
-  });
-  await expect.poll(() => reported(backend).length).toBe(2);
-  expectCube(reported(backend)[1], [40, 20, 20]);
+  await tab(page, "Code").click();
+  await expect(page.getByLabel("Code", { exact: true })).toContainText(
+    'BODIES = ["plate", "peg"];',
+  );
+
+  await tab(page, "Files").click();
+  const gcode = page.getByRole("link", { name: "Download print/print.gcode" });
+  await expect(gcode).toHaveAttribute(
+    "href",
+    /\/api\/threads\/thread-[0-9a-f]+\/artifacts\/mnt\/user-data\/outputs\/design\/v1\/print\/print\.gcode\?download=true$/,
+  );
+  await expect(
+    page.getByRole("link", { name: "Download report.json" }),
+  ).toBeVisible();
 });
 
-test("a turn that saves no draft says so instead of showing nothing", async ({
+test("a turn that makes no version says so, and the next one shows it", async ({
   page,
 }) => {
   const backend = await setup(page, 1440);
-  backend.draft = null;
+  backend.render = false;
   await page.goto(pageURL);
   await page.getByRole("button", { name: "New design" }).click();
 
-  const prompt = page.getByRole("textbox", { name: /Describe the part/ });
-  await prompt.fill("A 30 x 20 x 10 mm block with a cone on top");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-
+  await prompt(page).fill("A plate with two holes");
+  await send(page);
   await expect(page.getByText(TEXT_ANSWER)).toBeVisible();
   await expect(
     page.getByText(
-      "The model answered without saving a draft, so the preview did not change. Ask it to draft the part.",
+      "The model answered without making a new version, so the preview did not change.",
     ),
   ).toBeVisible();
-  await expect(prompt).toBeEnabled();
-  await expect(page.getByText("No render yet.")).toBeVisible();
-  expect(backend.versions).toHaveLength(0);
-  expect(backend.calledWith("report_render")).toHaveLength(0);
+  await expect(prompt(page)).toBeEnabled();
+  await expect(page.getByText(/^No version yet/)).toBeVisible();
 
-  // The next prompt clears it.
-  backend.draft = CUBE;
-  await prompt.fill("Draft it, please");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
-  await expect(page.getByText(/without saving a draft/)).toHaveCount(0);
+  backend.render = true;
+  await prompt(page).fill("M4, please");
+  await send(page);
+  await expect(
+    page.getByText("v1 · 2 bodies · rendered in 2.5 s"),
+  ).toBeVisible();
+  await expect(page.getByText(/without making a new version/)).toHaveCount(0);
 });
 
-test("a syntax error in a hand edit names its line", async ({ page }) => {
+test("a prompt sent while an older version is shown names it, and the answer is shown", async ({
+  page,
+}) => {
   const backend = await setup(page, 1440);
-  backend.seed("Bracket", CUBE, rendered);
+  await backend.seed("Bracket", 2);
   await page.goto(pageURL);
   await page.getByRole("button", { name: /Bracket/ }).click();
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
 
-  await page.getByRole("tab", { name: "Code" }).click();
-  const editor = page.getByRole("textbox", { name: "Code", exact: true });
-  await editor.click();
-  await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.insertText("width = 20;\ncube([width, 20, 20];\n");
-  await expect(page.getByRole("button", { name: "line 2" })).toBeVisible({
-    timeout: 30_000,
+  const version = page.getByRole("combobox", { name: "Version" });
+  await expect(version).toHaveValue("2");
+  await expect(page.getByText(/^10 × 10 × 22 mm/)).toBeVisible();
+  await version.selectOption("1");
+  await expect(page.getByText(/^10 × 10 × 21 mm/)).toBeVisible();
+  await expect(
+    page.getByText(
+      "You are looking at v1; your next message tells the model so.",
+    ),
+  ).toBeVisible();
+
+  await prompt(page).fill("Make this one taller");
+  await send(page);
+  await expect.poll(() => backend.calledWith("prompt").length).toBe(1);
+  expect(backend.calledWith("prompt")[0]!.payload).toMatchObject({
+    viewing: 1,
+    newest: 2,
   });
-  await expect(page.getByText(/syntax error/i)).toBeVisible();
-  // A failed hand edit is not stored until it is saved.
-  expect(backend.calledWith("save_version")).toHaveLength(0);
+  // The run's new version is the answer: it is shown, not the one picked.
+  await expect(version).toHaveValue("3");
+  await expect(page.getByText(/^10 × 10 × 23 mm/)).toBeVisible();
+  await expect(page.getByText(/You are looking at v/)).toHaveCount(0);
 });
 
-test("at 390 px the page switches between Prompt, Preview and Code tabs", async ({
+test("at 390 px the page switches between the Prompt and Preview tabs", async ({
   page,
 }) => {
   const backend = await setup(page, 390);
-  backend.seed("Phone part", CUBE, rendered);
+  await backend.seed("Phone part");
   await page.goto(pageURL);
   await page.getByRole("button", { name: /Phone part/ }).click();
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
 
-  const tab = (name: string) => page.getByRole("tab", { name, exact: true });
-  await expect(tab("Prompt")).toBeVisible();
-  // The wide layout's tabs are hidden; parameters live inside Code.
-  await expect(tab("Parameters")).toBeHidden();
-  await expect(tab("Versions")).toBeHidden();
-  await expect(tab("Preview")).toHaveAttribute("aria-selected", "true");
-  const prompt = page.getByRole("textbox", { name: /Describe the part/ });
-  await expect(prompt).toBeHidden();
+  await expect(tab(page, "Prompt")).toBeVisible();
+  await expect(tab(page, "Preview").first()).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator("canvas")).toBeVisible();
+  await expect(prompt(page)).toBeHidden();
+  await expect(page.getByText("plate", { exact: true })).toBeVisible();
 
-  await tab("Code").click();
-  await expect(page.getByRole("textbox", { name: "Code" })).toBeVisible();
-  await expect(page.getByRole("slider", { name: "width" })).toBeVisible();
+  await tab(page, "Prompt").click();
+  await expect(prompt(page)).toBeVisible();
   await expect(page.locator("canvas")).toBeHidden();
 
-  await tab("Prompt").click();
-  await expect(prompt).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Code" })).toBeHidden();
-
-  await tab("Preview").click();
+  await tab(page, "Preview").first().click();
   await expect(page.locator("canvas")).toBeVisible();
   expect(
     await page.evaluate(
@@ -264,47 +258,38 @@ test("at 390 px the page switches between Prompt, Preview and Code tabs", async 
   ).toBe(true);
 });
 
-test("without WebGL the preview says so and the render is still reported", async ({
+test("without WebGL the preview says so and the bodies and checks still show", async ({
   page,
 }) => {
   const backend = await setup(page, 1440, { webgl: false });
-  backend.seed("No GPU", CUBE);
+  await backend.seed("No GPU");
   await page.goto(pageURL);
   await page.getByRole("button", { name: /No GPU/ }).click();
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
   await expect(
     page.getByText("This browser could not start the 3D preview."),
   ).toBeVisible();
-  await expect.poll(() => reported(backend).length).toBe(1);
-  expectCube(reported(backend)[0], [20, 20, 20]);
+  await expect(page.getByText(/^60 × 40 × 6 mm/)).toBeVisible();
   await expect(page.locator("canvas")).toHaveCount(0);
+  await tab(page, "Checks").click();
+  await expect(page.getByText("Rendered in 2.5 s.")).toBeVisible();
 });
 
-test("over plain http on a LAN or tailnet name, without crypto.subtle, a draft still renders", async ({
+test("without the CAD container the list and the design show the setup commands", async ({
   page,
-}, testInfo) => {
-  // Browsers expose crypto.subtle only in secure contexts; the wasm check used
-  // to require it, so every render failed at http://100.x:2026.
+}) => {
   const backend = await setup(page, 1440);
-  backend.seed("Tailnet", CUBE);
-  const insecure = new URL(
-    pageURL,
-    testInfo.project.use.baseURL ?? "http://localhost:3000",
-  );
-  insecure.hostname = "insecure.test";
-  await page.goto(insecure.href);
-  expect(
-    await page.evaluate(() => ({
-      secure: window.isSecureContext,
-      subtle: Boolean(globalThis.crypto?.subtle),
-    })),
-  ).toEqual({ secure: false, subtle: false });
-  await page.getByRole("button", { name: /Tailnet/ }).click();
-  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
-  await expect.poll(() => reported(backend).length).toBe(1);
-  expectCube(reported(backend)[0], [20, 20, 20]);
+  backend.container = false;
+  await backend.seed("Waiting");
+  await page.goto(pageURL);
+  await expect(
+    page.getByText("The Designs page needs the CAD container."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("make sandbox-enable MODE=container IMAGE=cad"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /Waiting/ }).click();
+  await expect(
+    page.getByText("The Designs page needs the CAD container."),
+  ).toBeVisible();
+  await expect(page.getByText("then restart the Gateway.")).toBeVisible();
 });

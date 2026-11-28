@@ -68,6 +68,7 @@ const EN = {
     `v${n} · ${bodies === 1 ? "1 body" : `${bodies} bodies`}${seconds === null ? "" : ` · rendered in ${seconds} s`}`,
   noViews:
     "No view images for this version. The model writes them with cadkit views.",
+  noChecks: "No checks yet: they belong to a version.",
   viewAlt: (name) => `Rendered view ${name}`,
   checks: {
     render: "Render",
@@ -81,7 +82,7 @@ const EN = {
     clash: (pair, volume, where) =>
       `${pair}: ${volume} mm³${where ? ` at ${where}` : ""}`,
     states: (states, clashes, clearance) =>
-      `${states} states checked, ${clashes} overlaps${clearance === null ? "" : `, clearance ${clearance} mm`}.`,
+      `${states} states checked, ${clashes === "1" ? "1 overlap" : `${clashes} overlaps`}${clearance === null ? "" : `, clearance ${clearance} mm`}.`,
     stateClash: (pose, state, pair, volume) =>
       `${pose} [${state}]: ${pair} ${volume} mm³`,
     more: (n) => `… ${n} more in the file.`,
@@ -180,6 +181,7 @@ const ZH = {
   summary: (n, bodies, seconds) =>
     `v${n} · ${bodies} 个部件${seconds === null ? "" : ` · 渲染用时 ${seconds} 秒`}`,
   noViews: "此版本没有视图图片。模型用 cadkit views 生成。",
+  noChecks: "还没有检查结果：检查属于某个版本。",
   viewAlt: (name) => `渲染视图 ${name}`,
   checks: {
     ...EN.checks,

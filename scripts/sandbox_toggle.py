@@ -9,6 +9,7 @@ The existing ``environment:`` block is preserved across both directions.
 Usage:
     python3 scripts/sandbox_toggle.py enable                    # → AIO external mode (localhost:8091)
     python3 scripts/sandbox_toggle.py enable --mode container   # → AIO local container mode (per-thread containers)
+    python3 scripts/sandbox_toggle.py enable --mode container --image cad  # → the same, on the CAD image
     python3 scripts/sandbox_toggle.py disable                   # → LocalSandboxProvider default
 
 Modes for ``enable``:
@@ -19,10 +20,18 @@ Modes for ``enable``:
   thread's user-data directories, so /mnt/user-data is host-backed — uploads,
   outputs, and present_files all work. Best mode for clone-and-debug workflows.
 
+Images for container mode: the stock pinned tag, or ``--image cad`` for the CAD
+image that ``make sandbox-cad-image`` builds from it (docker/sandbox-cad). An
+image means nothing to external mode, whose container `make sandbox-up` starts,
+so ``--image`` is refused there. When the config is already in container mode,
+only the ``image:`` line changes, so ``devices:``, ``expose_ports:`` and the
+other keys an operator set survive the switch; without ``--image`` that line
+goes back to the stock tag.
+
 Guarantees:
 - config.yaml is backed up to config.yaml.bak before any write.
-- Idempotent: enabling when already-AIO / disabling when already-local prints a
-  notice and does not rewrite (no new backup).
+- Idempotent: enabling the mode and image already set / disabling when
+  already-local prints a notice and does not rewrite (no new backup).
 - Hard-aborts (exit 1) if config.yaml has duplicate top-level ``sandbox:`` keys,
   naming the key and both line numbers.
 - Aborts (exit 1) with a pointer to ``make config`` if config.yaml is missing.
@@ -47,6 +56,12 @@ LOCAL_PROVIDER = "deerflow.sandbox.local:LocalSandboxProvider"
 # `:latest` mirror tag frozen on a pre-1.9.3 digest that lacks the /v1/bash/*
 # routes, which would leave the agent's env-bearing bash broken out of the box.
 AIO_SANDBOX_IMAGE = "ghcr.io/agent-infra/sandbox:1.11.0"
+
+# Images ``--image`` can name. The CAD image is built locally FROM the tag above
+# (docker/sandbox-cad, `make sandbox-cad-image`); there is no registry to pull
+# it from, so the Gateway's first container fails until it is built.
+CAD_SANDBOX_IMAGE = "deerflow-sandbox-cad:local"
+NAMED_IMAGES = {"cad": CAD_SANDBOX_IMAGE}
 
 DEFAULT_ENVIRONMENT = ["  environment:", "    GITHUB_TOKEN: $GITHUB_TOKEN"]
 
@@ -170,7 +185,7 @@ def build_enabled_section(environment: list[str] | None) -> list[str]:
     return lines
 
 
-def build_enabled_container_section(environment: list[str] | None) -> list[str]:
+def build_enabled_container_section(environment: list[str] | None, image: str = AIO_SANDBOX_IMAGE) -> list[str]:
     """Build the AIO local-container-mode sandbox section (per-thread containers)."""
     lines = [
         "sandbox:",
@@ -179,9 +194,10 @@ def build_enabled_container_section(environment: list[str] | None) -> list[str]:
         "  # and mounts that thread's user-data directories, so /mnt/user-data is",
         "  # host-backed (uploads, outputs, and present_files all work). Requires a",
         "  # local Docker daemon; no `make sandbox-up` needed.",
-        "  # Pinned image (matches docker/docker-compose.sandbox.yml); do NOT drop to",
-        "  # :latest — that mirror tag lacks the /v1/bash/* routes the agent needs.",
-        f"  image: {AIO_SANDBOX_IMAGE}",
+        "  # Pinned image (matches docker/docker-compose.sandbox.yml), or the CAD image",
+        f"  # ({CAD_SANDBOX_IMAGE}) that `make sandbox-cad-image` builds FROM it. Do NOT",
+        "  # drop to :latest — that mirror tag lacks the /v1/bash/* routes the agent needs.",
+        f"  image: {image}",
         "  # Wall-clock deadline for one bash command in the sandbox; raise it for",
         "  # long installs/builds. Each command carries its own request budget, so",
         "  # request_timeout only covers session creation and the file/list calls.",
@@ -228,6 +244,62 @@ def write_section(config_path: Path, new_section: list[str], start: int, end: in
     config_path.write_text(text, encoding="utf-8")
 
 
+def find_image_line(section_lines: list[str]) -> tuple[int | None, str | None, int]:
+    """Locate the section's own ``image:`` key.
+
+    Returns (index, value, indent): the index into ``section_lines`` and the
+    value of the ``image:`` line at the same indent as ``use:`` (None, None when
+    absent), and that indent, so a nested ``image:`` of a sub-mapping is never
+    taken for the sandbox's own.
+    """
+    indent = 2
+    for line in section_lines:
+        m = re.match(r"^(\s*)use:", line)
+        if m:
+            indent = len(m.group(1))
+            break
+    for i, line in enumerate(section_lines):
+        m = re.match(r"^(\s*)image:(.*)$", line)
+        if m and len(m.group(1)) == indent:
+            return i, m.group(2).split("#", 1)[0].strip().strip("'\"") or None, indent
+    return None, None, indent
+
+
+def switch_image(config_path: Path, lines: list[str], start: int, end: int, image: str) -> int:
+    """Point an AIO container-mode section at ``image`` by changing one line."""
+    section_lines = lines[start + 1 : end]
+    index, current, indent = find_image_line(section_lines)
+    if current == image:
+        print(f"OK sandbox is already set to AIO container mode with image {image} — no change.")
+        return 0
+    new_line = f"{' ' * indent}image: {image}"
+    if index is None:
+        # No image: the provider would fall back to its broken :latest default,
+        # so pin one right after `use:`.
+        use_index = next((i for i, ln in enumerate(section_lines) if re.match(r"^\s*use:", ln)), -1)
+        section_lines.insert(use_index + 1, new_line)
+    else:
+        section_lines[index] = new_line
+    print(f"Switching the AIO container-mode image: {current or '(none)'} -> {image}")
+    write_section(config_path, [lines[start], *section_lines], start, end, lines)
+    print("OK sandbox image updated; the rest of the sandbox section is unchanged.")
+    print_image_hint(image)
+    return 0
+
+
+def print_image_hint(image: str, *, containers_may_run: bool = True) -> None:
+    """Say what the operator does next after the container image changed."""
+    if image == CAD_SANDBOX_IMAGE:
+        print(f"  {CAD_SANDBOX_IMAGE} is built locally, never pulled: run `make sandbox-cad-image` first.")
+    if not containers_may_run:
+        return
+    # A restarted Gateway adopts a labelled sandbox container whatever its image
+    # (LocalContainerBackend compares the image only for unlabelled ones).
+    print("  Remove the running sandbox containers, then restart the Gateway: a restarted Gateway keeps")
+    print("  using a running container whatever its image. `make stop` and `make docker-stop` remove")
+    print("  them; otherwise run `bash scripts/cleanup-containers.sh`.")
+
+
 def current_aio_mode(section_lines: list[str]) -> str:
     """Return "external" when the section pins a base_url, else "container"."""
     for line in section_lines:
@@ -237,7 +309,13 @@ def current_aio_mode(section_lines: list[str]) -> str:
     return "container"
 
 
-def toggle(action: str, config_path: Path, mode: str = "external") -> int:
+def toggle(action: str, config_path: Path, mode: str = "external", image: str | None = None) -> int:
+    """Rewrite the sandbox section; ``image`` is a key of NAMED_IMAGES, container mode only."""
+    if image is not None and (action != "enable" or mode != "container"):
+        print("✗ --image applies only to `enable --mode container`: external mode connects to the one")
+        print("  container `make sandbox-up` starts, which never uses the configured image.")
+        return 2
+    target_image = NAMED_IMAGES[image] if image is not None else AIO_SANDBOX_IMAGE
     safe_load_guarded, duplicate_key_error = _load_yaml_guard()
     raw = config_path.read_text(encoding="utf-8")
     try:
@@ -264,11 +342,13 @@ def toggle(action: str, config_path: Path, mode: str = "external") -> int:
             print("OK sandbox is already set to LocalSandboxProvider — no change.")
             return 0
         if current_aio_mode(section_lines) == mode:
+            if mode == "container":
+                return switch_image(config_path, lines, start, end, target_image)
             print(f"OK sandbox is already set to AIO {mode} mode — no change.")
             return 0
 
     if action == "enable" and mode == "container":
-        new_section = build_enabled_container_section(environment)
+        new_section = build_enabled_container_section(environment, target_image)
         print("Enabling AIO sandbox in local container mode (one container per thread).")
         print("  Requires a running Docker daemon; containers start on first use.")
     elif action == "enable":
@@ -281,29 +361,43 @@ def toggle(action: str, config_path: Path, mode: str = "external") -> int:
 
     write_section(config_path, new_section, start, end, lines)
     print("OK sandbox section updated.")
+    if action == "enable" and mode == "container":
+        # Coming from the local or the external sandbox, no per-thread container runs yet.
+        print_image_hint(target_image, containers_may_run=False)
     return 0
 
 
 def main(argv: list[str]) -> int:
-    usage = "usage: sandbox_toggle.py {enable [--mode {external|container}]|disable}"
+    usage = f"usage: sandbox_toggle.py {{enable [--mode {{external|container}}] [--image {{{'|'.join(NAMED_IMAGES)}}}]|disable}}"
     args = argv[1:]
     if not args or args[0] not in ("enable", "disable"):
         print(usage, file=sys.stderr)
         return 2
     action = args[0]
-    mode = "external"
+    options = {"--mode": ("external", "container"), "--image": tuple(NAMED_IMAGES)}
+    chosen: dict[str, str] = {}
     rest = args[1:]
-    if rest:
-        if action != "enable" or len(rest) != 2 or rest[0] != "--mode" or rest[1] not in ("external", "container"):
+    if rest and action != "enable":
+        print(usage, file=sys.stderr)
+        return 2
+    while rest:
+        if len(rest) < 2 or rest[0] not in options or rest[0] in chosen or rest[1] not in options[rest[0]]:
             print(usage, file=sys.stderr)
             return 2
-        mode = rest[1]
+        chosen[rest[0]] = rest[1]
+        rest = rest[2:]
+    mode = chosen.get("--mode", "external")
+    image = chosen.get("--image")
+    if image is not None and mode != "container":
+        print(f"✗ --image {image} needs --mode container (make sandbox-enable MODE=container IMAGE={image}):", file=sys.stderr)
+        print("  external mode connects to the one container `make sandbox-up` starts, which never uses the configured image.", file=sys.stderr)
+        return 2
     config_path = resolve_config_path()
     if config_path is None:
         print("✗ No config.yaml found.")
         print("  Run `make config` (or `make setup`) to create it first.")
         return 1
-    return toggle(action, config_path, mode)
+    return toggle(action, config_path, mode, image)
 
 
 if __name__ == "__main__":

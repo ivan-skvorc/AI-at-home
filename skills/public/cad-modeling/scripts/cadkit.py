@@ -48,6 +48,8 @@ PLA_DENSITY_G_CM3 = 1.24
 PALETTE = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#B279A2", "#EECA3B", "#9D755D", "#FF9DA6", "#BAB0AC"]
 MAX_SWEEP_STEPS = 360
 MAX_STEP_TRIANGLES = 60000
+# PrusaSlicer's own log lines ("[2026-...] [0x7f...] [trace]   Initializing StaticPrintConfigs"), printed on every run.
+SLICER_LOG = re.compile(r"^\[[^\]]*\] \[0x[0-9a-fA-F]+\] \[(trace|debug|info)\]")
 
 
 class Failed(Exception):
@@ -840,7 +842,7 @@ def _slice(version: Path, files: list[Path], bed: list[float]) -> dict:
         return {"error": " / ".join(tail) or f"slicer exited {run.returncode}"}
     found = {}
     # The slicer's own warnings ("Low bed adhesion / rest.stl, strut.stl") are everything but progress lines.
-    notes = [line.strip() for line in (run.stdout + run.stderr).splitlines() if line.strip() and "=>" not in line and not line.startswith("Slicing result")]
+    notes = [line.strip() for line in (run.stdout + run.stderr).splitlines() if line.strip() and "=>" not in line and not line.startswith("Slicing result") and not SLICER_LOG.match(line.strip())]
     if notes:
         found["warnings"] = [" ".join(notes)[:400]]
     with gcode.open(errors="replace") as handle:

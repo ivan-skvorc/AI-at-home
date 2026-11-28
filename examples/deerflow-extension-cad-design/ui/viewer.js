@@ -274,8 +274,6 @@ export function createViewer(viewport, { label, onLost }) {
         }
       requestRender();
     },
-    has: (name) => bodies.has(name),
-    hasBodies: () => bodies.size > 0,
     fit: (direction) => fit(direction),
     /** Forget the bodies and the camera so the next design is framed afresh. */
     reset() {

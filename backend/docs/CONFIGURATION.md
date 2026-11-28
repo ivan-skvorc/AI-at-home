@@ -1958,6 +1958,25 @@ sandbox:
   image: your-registry/your-aio-sandbox:tag
 ```
 
+#### The shipped example: the CAD image
+
+`docker/sandbox-cad/` is a custom image this repository ships for the CAD design page and the `cad-modeling` skill (FORK.md §58). It extends `ghcr.io/agent-infra/sandbox:1.11.0`, the tag `make sandbox-enable MODE=container` pins, rather than the mirror's `:latest`, which lacks the `/v1/bash/*` routes. It adds OpenSCAD, PrusaSlicer, the DejaVu and Liberation fonts, and the Python mesh and CAD libraries (trimesh, manifold3d, shapely, rtree, CadQuery) that the skill's `cadkit.py` runs. It follows the rules above and adds three of its own:
+
+- It installs into the image's own `python3` and holds every package the base image already ships at its version with a constraints file, so the CAD wheels cannot move numpy or matplotlib under the image's Jupyter.
+- Every requirement is an exact pin, so a rebuild gives the image that was tested.
+- The build imports each library once, so a broken wheel fails the build instead of the first conversation.
+
+```bash
+make sandbox-cad-image                        # builds the local tag deerflow-sandbox-cad:local
+make sandbox-enable MODE=container IMAGE=cad  # writes image: deerflow-sandbox-cad:local
+```
+
+Nothing publishes the tag, so build it on the host whose Docker daemon runs the sandbox containers before you select it, and rebuild it when the pinned base tag moves. The target builds with Docker; Apple Container keeps its own image store and does not see the result. When the sandbox section is already in container mode, `IMAGE=cad` changes only its `image:` line, so `devices:`, `expose_ports:` and other keys you set stay. `make sandbox-enable MODE=container` without `IMAGE` sets `image:` back to the stock tag, also over an image you set by hand. A new image reaches new containers only: a restarted Gateway adopts a running sandbox container whatever its image, so remove the running ones first (`make stop` and `make docker-stop` do; otherwise run `scripts/cleanup-containers.sh`), then restart the Gateway.
+
+The 2 GiB default memory cap (`DEER_FLOW_SANDBOX_MEMORY`, above) suits drafts. A STEP export of a large body can need more; set `DEER_FLOW_SANDBOX_MEMORY=4g` in the Gateway's environment.
+
+`docker/sandbox-cad/smoke.sh [IMAGE] [REPO_ROOT]` runs `cadkit.py` through its whole loop (render, check, views, print with the slicer, STEP and 3MF export) on a two-body model inside the image, as uid 1000 without capabilities, under the default memory cap and with no network. The `sandbox-cad-image` workflow builds the image and runs it whenever the image, the skill or `scripts/sandbox_toggle.py` changes.
+
 In provisioner mode, sandbox Pods are created by the provisioner service, so configure the provisioner `SANDBOX_IMAGE` environment variable instead of `sandbox.image`. See the [Provisioner Setup Guide](../../docker/provisioner/README.md#custom-sandbox-image).
 
 If you rebuild the runtime from scratch instead of extending the published image, it must expose the same HTTP API used by `agent-sandbox`. DeerFlow currently depends on:

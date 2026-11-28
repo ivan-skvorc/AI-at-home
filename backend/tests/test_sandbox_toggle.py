@@ -2,13 +2,17 @@
 
 Rewrites ONLY the top-level sandbox: section, preserving the rest of the file
 and the environment: block, idempotent, backing up first, and hard-aborting on
-duplicate sandbox: keys.
+duplicate sandbox: keys. In container mode, IMAGE=cad (and its absence) changes
+only the image: line of a section that is already in container mode.
 """
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+
+import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "sandbox_toggle.py"
@@ -159,6 +163,106 @@ class TestEnableContainerMode:
         rc = toggle.main(["sandbox_toggle.py", "disable", "--mode", "container"])
         assert rc == 2
         assert "usage:" in capsys.readouterr().err
+
+
+CONTAINER_CONFIG_WITH_OPERATOR_KEYS = """\
+config_version: 3
+sandbox:
+  use: deerflow.community.aio_sandbox:AioSandboxProvider
+  network_proxy:
+    image: proxy:latest
+  image: ghcr.io/agent-infra/sandbox:1.11.0
+  devices: [/dev/kvm]
+  expose_ports: [8000]
+  environment:
+    GITHUB_TOKEN: $GITHUB_TOKEN
+tools: []
+"""
+
+
+class TestImageOption:
+    """`make sandbox-enable MODE=container IMAGE=cad` and the way back."""
+
+    def test_enable_container_with_cad_image_writes_the_cad_tag(self, tmp_path, capsys):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        rc = toggle.toggle("enable", config, mode="container", image="cad")
+        assert rc == 0
+        block = yaml.safe_load(config.read_text(encoding="utf-8"))["sandbox"]
+        assert block["image"] == "deerflow-sandbox-cad:local"
+        assert block["use"] == "deerflow.community.aio_sandbox:AioSandboxProvider"
+        assert "base_url" not in block
+        # The tag is local only, so the operator is told to build it.
+        assert "make sandbox-cad-image" in capsys.readouterr().out
+
+    def test_already_container_switches_only_the_image_line(self, tmp_path):
+        config = _write(tmp_path, CONTAINER_CONFIG_WITH_OPERATOR_KEYS)
+        rc = toggle.toggle("enable", config, mode="container", image="cad")
+        assert rc == 0
+        before = CONTAINER_CONFIG_WITH_OPERATOR_KEYS.splitlines()
+        after = config.read_text(encoding="utf-8").splitlines()
+        changed = [(old, new) for old, new in zip(before, after, strict=True) if old != new]
+        # devices:, expose_ports: and the sub-mapping's own image: survive.
+        assert changed == [("  image: ghcr.io/agent-infra/sandbox:1.11.0", "  image: deerflow-sandbox-cad:local")]
+        assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == CONTAINER_CONFIG_WITH_OPERATOR_KEYS
+
+    def test_container_mode_without_image_goes_back_to_the_stock_tag(self, tmp_path):
+        config = _write(tmp_path, CONTAINER_CONFIG_WITH_OPERATOR_KEYS)
+        toggle.toggle("enable", config, mode="container", image="cad")
+        rc = toggle.toggle("enable", config, mode="container")
+        assert rc == 0
+        assert config.read_text(encoding="utf-8") == CONTAINER_CONFIG_WITH_OPERATOR_KEYS
+
+    def test_cad_image_already_set_is_a_no_op(self, tmp_path, capsys):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        toggle.toggle("enable", config, mode="container", image="cad")
+        before = config.read_text(encoding="utf-8")
+        (tmp_path / "config.yaml.bak").unlink()
+        capsys.readouterr()
+        rc = toggle.toggle("enable", config, mode="container", image="cad")
+        assert rc == 0
+        assert "already set to AIO container mode" in capsys.readouterr().out
+        assert config.read_text(encoding="utf-8") == before
+        assert not (tmp_path / "config.yaml.bak").exists()
+
+    def test_container_section_without_an_image_gets_one_after_use(self, tmp_path):
+        config = _write(tmp_path, "sandbox:\n    use: deerflow.community.aio_sandbox:AioSandboxProvider\n    idle_timeout: 600\ntools: []\n")
+        rc = toggle.toggle("enable", config, mode="container", image="cad")
+        assert rc == 0
+        lines = config.read_text(encoding="utf-8").splitlines()
+        assert lines[1:4] == ["    use: deerflow.community.aio_sandbox:AioSandboxProvider", "    image: deerflow-sandbox-cad:local", "    idle_timeout: 600"]
+
+    def test_main_passes_the_image_in_either_order(self, tmp_path, monkeypatch):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        rc = toggle.main(["sandbox_toggle.py", "enable", "--image", "cad", "--mode", "container"])
+        assert rc == 0
+        assert yaml.safe_load(config.read_text(encoding="utf-8"))["sandbox"]["image"] == "deerflow-sandbox-cad:local"
+
+    @pytest.mark.parametrize("argv", [["enable", "--image", "cad"], ["enable", "--mode", "external", "--image", "cad"]], ids=["default-mode", "external"])
+    def test_main_refuses_an_image_outside_container_mode(self, tmp_path, monkeypatch, capsys, argv):
+        config = _write(tmp_path, AIO_CONFIG_WITH_ENV)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        rc = toggle.main(["sandbox_toggle.py", *argv])
+        assert rc == 2
+        assert "needs --mode container" in capsys.readouterr().err
+        assert config.read_text(encoding="utf-8") == AIO_CONFIG_WITH_ENV
+
+    def test_toggle_refuses_an_image_outside_container_mode(self, tmp_path):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        assert toggle.toggle("enable", config, mode="external", image="cad") == 2
+        assert config.read_text(encoding="utf-8") == LOCAL_CONFIG
+
+    @pytest.mark.parametrize(
+        "argv",
+        [["enable", "--mode", "container", "--image", "vm"], ["disable", "--image", "cad"], ["enable", "--mode", "container", "--mode", "external"], ["enable", "--image"]],
+        ids=["unknown-image", "disable", "repeated-flag", "missing-value"],
+    )
+    def test_main_rejects_bad_image_arguments(self, tmp_path, monkeypatch, capsys, argv):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        assert toggle.main(["sandbox_toggle.py", *argv]) == 2
+        assert "usage:" in capsys.readouterr().err
+        assert config.read_text(encoding="utf-8") == LOCAL_CONFIG
 
 
 class TestDisable:

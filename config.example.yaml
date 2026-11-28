@@ -3577,8 +3577,10 @@ sandbox:
 #   # contains QEMU: the hardened container blocks sudo (`no-new-privileges`),
 #   # so system packages cannot be installed at run time. Build your own image
 #   # FROM the pinned tag, name it here, and rebuild it when the pin moves.
-#   # `make sandbox-enable MODE=container` rewrites this section and resets
-#   # `image:` to the stock tag, so set it again afterwards.
+#   # Switching to container mode rewrites this section; when it is already in
+#   # container mode, `make sandbox-enable MODE=container` changes only `image:`
+#   # (back to the stock tag, or the CAD image with IMAGE=cad), so set a custom
+#   # image again afterwards.
 #   # The CAD design page and the cad-modeling skill use the CAD image, built by
 #   # `make sandbox-cad-image` and selected by
 #   # `make sandbox-enable MODE=container IMAGE=cad` (FORK.md §58).

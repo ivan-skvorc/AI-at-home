@@ -15,7 +15,13 @@ export function createRunState() {
 }
 
 /** The argument that says best what a call does (actions.py SUMMARY_KEYS). */
-const SUMMARY_KEYS = ["command", "path", "image_path", "filepaths", "description"];
+const SUMMARY_KEYS = [
+  "command",
+  "path",
+  "image_path",
+  "filepaths",
+  "description",
+];
 const MAX_SUMMARY = 200;
 
 const record = (value) =>

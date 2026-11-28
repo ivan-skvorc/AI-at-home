@@ -262,6 +262,11 @@ aio_sandbox_preflight() {
     image="$(sandbox_image_from_config "$config_file")"
     if docker image inspect "$image" >/dev/null 2>&1; then
         echo "✓ Sandbox image present: $image"
+    elif [ "$image" = "deerflow-sandbox-cad:local" ]; then
+        # A local-only tag: there is nothing to pull, and a pull error would blame the network.
+        echo "✗ Sandbox: the CAD image '$image' is built locally and is not present." >&2
+        echo "  Build it with: make sandbox-cad-image (or go back to the stock image: make sandbox-enable MODE=container)" >&2
+        return 1
     else
         echo "Sandbox image not found locally — pulling $image"
         echo "  (first run only; this image is large and can take several minutes)"

@@ -30,4 +30,4 @@ RUN python3 -m pip freeze | grep -E '^[A-Za-z0-9_.-]+==' > /tmp/base-constraints
 # Fail the build, not the first conversation, when a tool is missing.
 RUN openscad --version \
  && prusa-slicer --help > /dev/null \
- && python3 -c "import trimesh, manifold3d, shapely, rtree, matplotlib, lxml, cadquery; print('cad libraries ok')"
+ && python3 -c "import trimesh, manifold3d, shapely, rtree, scipy, networkx, matplotlib, lxml, cadquery; print('cad libraries ok')"

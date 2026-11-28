@@ -1,5 +1,4 @@
-// The entry stays tiny: the page, three.js and CodeMirror load when it opens,
-// and OpenSCAD's WebAssembly when the first render is asked for.
+// The entry stays tiny: the page and three.js load when it opens.
 export default {
   apiVersion: 1,
   module: "cad-design",
