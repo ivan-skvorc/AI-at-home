@@ -163,17 +163,19 @@ providers that pass could actually reach.
       slug and no price to bundle. Once both exist, it is the roll candidate for GLM-5.3, home
       and routed.
     - New labs: Thinking Machines Inkling 2 Mini (#1 on New & Trending, 552B, new), Upstage
-      Solar Mini 4.5 (#2, still a preview id), Xiaomi MiMo-V2.6-Flash-MOPD (#4).
+      Solar Mini 4.5 (#2, labelled Preview), Xiaomi MiMo-V2.6-Flash-MOPD (#4).
   - No cloaked codename is in the catalog or on the boards read.
 
   **Still owed:**
   - Tencent Hy4 flash: #2 weekly (38.7T, asterisked because its BYOK traffic is capped), #2
     today and #4 monthly. Its daily tokens fell from 21–24T on 11-17..11-20 to 3.5–5.6T on
     11-23..11-27. Tencent's own OpenRouter host charges `$0.035/$0.1405` at 50% off; Fireworks
-    and DeepInfra charge `$0.07/$0.281`. Tencent ships a public API, so it earns a home block
-    and its own key as well as a routed entry. That touches `.env.example`, README, FORK.md and
-    the routed-only pin in `TestFirstPartyKeyCoverage`, and Tencent's own pricing page was
-    refused here. It needs a dedicated change on a network that reaches Tencent.
+    and DeepInfra charge `$0.07/$0.281`. Tencent serves the model from its own host, so if its
+    public API is confirmed on Tencent's own pages, it earns a home block and its own key as
+    well as a routed entry (step 3; routed-only is reserved for labs with no such API). That
+    touches `.env.example`, README, FORK.md and the routed-only pin in
+    `TestFirstPartyKeyCoverage`, and Tencent's pages were refused here. It needs a dedicated
+    change on a network that reaches Tencent.
   - GLM-5.4, once its API and price are published.
   - Meta's Muse line under the `meta/` prefix (not on the boards read this pass).
   - The Mistral Large 4 thinking flag and the MiniMax adapter.
