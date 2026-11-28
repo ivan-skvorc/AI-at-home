@@ -213,6 +213,14 @@ def _read_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _clear(folder: Path) -> None:
+    """Remove a folder cadkit writes afresh; a link there is removed, never followed."""
+    if folder.is_symlink() or folder.is_file():
+        folder.unlink()
+    elif folder.exists():
+        shutil.rmtree(folder)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1279,11 +1287,15 @@ def _verify_stl(path: Path, info: dict, label: str) -> dict:
 
 
 def _proven(version: Path, body: str) -> dict | None:
-    """The passing compare result of an editable <body>-cq.step in the version folder, if there is one."""
+    """The passing compare of an editable <body>-cq.step against <body>.stl, made on the file as it is now."""
     result = _read_json(version / f"{body}-cq.compare.json")
-    if result and result.get("passed") is True and Path(str(result.get("b", ""))).name == f"{body}-cq.step":
-        return result
-    return None
+    step = version / f"{body}-cq.step"
+    if not result or result.get("passed") is not True or not step.is_file():
+        return None
+    if Path(str(result.get("a", ""))).name != f"{body}.stl" or Path(str(result.get("b", ""))).name != step.name:
+        return None
+    # A STEP edited after its compare is not the one that passed.
+    return result if result.get("b_sha256") == _sha256(step) else None
 
 
 def _zip_candidates(version: Path) -> list[str]:
@@ -1822,8 +1834,7 @@ def cmd_study(args) -> int:
     exe = _openscad()
     flags = _openscad_flags(exe)
     root = Path(args.design).resolve() / "studies" / name
-    if root.exists():
-        shutil.rmtree(root)  # a study run again replaces its last run
+    _clear(root)  # a study run again replaces its last run
     root.mkdir(parents=True)
     shutil.copyfile(source_path, root / "model.scad")
     started = time.monotonic()
@@ -1936,8 +1947,7 @@ def cmd_testpiece(args) -> int:
         raise Unusable(f"the box {where} holds nothing of any body ({spans}); move the box.")
 
     folder = version / "test"
-    if folder.exists():
-        shutil.rmtree(folder)  # a new cut replaces the last one
+    _clear(folder)  # a new cut replaces the last one
     folder.mkdir()
     report = {"version": f"{version.name}/test", "model": str(version / "model.scad"), "box_mm": [*lo, *hi], "bodies": {}}
     loaded, results = {}, {}
@@ -2044,7 +2054,7 @@ def cmd_compare(args) -> int:
     deviation, at = (float(from_a[worst_a]), points_a[worst_a]) if from_a[worst_a] >= from_b[worst_b] else (float(from_b[worst_b]), points_b[worst_b])
     passed = percent < args.tolerance
     out = {
-        "a": str(a_path), "b": str(b_path), "a_info": info_a, "b_info": info_b,
+        "a": str(a_path), "b": str(b_path), "a_info": info_a, "b_info": info_b, "a_sha256": _sha256(a_path), "b_sha256": _sha256(b_path),
         "volume_a_mm3": _r(volume_a, 3), "volume_b_mm3": _r(volume_b, 3), "volume_difference_mm3": _r(volume_b - volume_a, 3),
         "box_difference_mm": _r(box_off, 4), "symmetric_difference_mm3": _r(symmetric, 3), "symmetric_difference_pct": _r(percent, 4),
         "max_deviation_mm": _r(deviation, 4), "max_deviation_at_mm": [_r(v, 2) for v in at], "samples_per_solid": args.samples,
