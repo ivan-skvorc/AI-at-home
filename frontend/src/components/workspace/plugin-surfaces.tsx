@@ -16,9 +16,12 @@ import {
 import {
   bindFrontendServices,
   joinRunStream,
+  listThreadOutputs,
   openConversation,
   pluginModelSnapshot,
+  readThreadOutput,
   requestExtensionRoute,
+  threadOutputURL,
 } from "@/core/extensions/services";
 import { mountSurface } from "@/core/extensions/surfaces";
 import { useI18n } from "@/core/i18n/hooks";
@@ -74,6 +77,11 @@ function Surface({
           openConversation(id, (path) => router.push(path), signal),
         joinRunStream: (threadId, runId, signal) =>
           joinRunStream(threadId, runId, signal),
+        threadFiles: {
+          list: listThreadOutputs,
+          read: readThreadOutput,
+          url: threadOutputURL,
+        },
         models: {
           get list() {
             return currentModels.current.list.map((model) => ({ ...model }));

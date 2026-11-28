@@ -1,6 +1,9 @@
 import { getAPIClient } from "@/core/api";
 import { fetch } from "@/core/api/fetcher";
+import { MAX_BINARY_PREVIEW_BYTES } from "@/core/artifacts/binary-preview";
+import { urlOfArtifact } from "@/core/artifacts/utils";
 import { getBackendBaseURL } from "@/core/config";
+import { fetchThreadFiles } from "@/core/thread-files/api";
 import { formatThreadAsJSON } from "@/core/threads/export";
 import type { AgentThreadState } from "@/core/threads/types";
 import { pathOfThread } from "@/core/threads/utils";
@@ -12,6 +15,7 @@ import type {
   ExtensionRequestOptions,
   RunStreamEvent,
   SurfaceModels,
+  SurfaceThreadFileEntry,
 } from "./contracts";
 
 /** Same Gateway and CSRF transport as host calls; never replay an HTTP mutation. */
@@ -146,6 +150,140 @@ export async function* joinRunStream(
   if (!response.ok || !response.body)
     throw new Error(`Run stream unavailable (${response.status})`);
   yield* parseServerSentEvents(response.body, signal);
+}
+
+/** The only tree a page may list or read: what the thread's runs produced. */
+export const THREAD_OUTPUTS_ROOT = "/mnt/user-data/outputs";
+
+/** An HTTP failure of a thread file route; `status` tells "not there" (404) from the rest. */
+export class ThreadFileError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ThreadFileError";
+    this.status = status;
+  }
+}
+
+/**
+ * Refuse anything but a plain virtual path at or under the outputs root: no
+ * `.`, `..` or empty segment, no backslash or control character. The routes
+ * confine paths again; this keeps a page from asking for uploads, the
+ * workspace or another route at all.
+ */
+function checkThreadFile(threadId: string, virtualPath: string) {
+  if (!RUN_REFERENCE.test(threadId))
+    throw new Error("Expected a thread identifier");
+  const rest =
+    virtualPath === THREAD_OUTPUTS_ROOT
+      ? ""
+      : virtualPath.startsWith(`${THREAD_OUTPUTS_ROOT}/`)
+        ? virtualPath.slice(THREAD_OUTPUTS_ROOT.length + 1)
+        : null;
+  if (
+    rest === null ||
+    /[\\\u0000-\u001f\u007f]/.test(virtualPath) ||
+    (rest !== "" &&
+      rest
+        .split("/")
+        .some((part) => part === "" || part === "." || part === ".."))
+  )
+    throw new Error("Expected a path under /mnt/user-data/outputs/");
+}
+
+/** List one folder of a thread's outputs through the owner-checked listing route. */
+export async function listThreadOutputs(
+  threadId: string,
+  virtualPath: string,
+  signal: AbortSignal,
+): Promise<SurfaceThreadFileEntry[]> {
+  signal.throwIfAborted();
+  checkThreadFile(threadId, virtualPath);
+  let listing;
+  try {
+    listing = await fetchThreadFiles({ threadId, path: virtualPath, signal });
+  } catch (error) {
+    signal.throwIfAborted();
+    const status =
+      typeof (error as { status?: unknown }).status === "number"
+        ? (error as { status: number }).status
+        : 0;
+    throw new ThreadFileError(status, `Thread files unavailable (${status})`);
+  }
+  signal.throwIfAborted();
+  return listing.entries.map(({ name, path, kind, size, modified_at }) => ({
+    name,
+    path,
+    kind,
+    size,
+    modified_at,
+  }));
+}
+
+/** Read one output file through the artifact route, bounded even without Content-Length. */
+export async function readThreadOutput(
+  threadId: string,
+  virtualPath: string,
+  signal: AbortSignal,
+  maxBytes = MAX_BINARY_PREVIEW_BYTES,
+): Promise<ArrayBuffer> {
+  signal.throwIfAborted();
+  checkThreadFile(threadId, virtualPath);
+  const limit =
+    Number.isFinite(maxBytes) && maxBytes > 0
+      ? Math.min(Math.floor(maxBytes), MAX_BINARY_PREVIEW_BYTES)
+      : MAX_BINARY_PREVIEW_BYTES;
+  const response = await fetch(
+    urlOfArtifact({ filepath: virtualPath, threadId }),
+    { method: "GET", cache: "no-store", redirect: "error", signal },
+  );
+  signal.throwIfAborted();
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ThreadFileError(
+      response.status,
+      `Thread file unavailable (${response.status})`,
+    );
+  }
+  const tooLarge = () =>
+    new ThreadFileError(413, `Thread file larger than ${limit} bytes`);
+  if (Number(response.headers.get("content-length")) > limit) {
+    await response.body.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      length += value.byteLength;
+      if (length > limit) throw tooLarge();
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+/** The authenticated artifact URL of an output file, with each segment encoded. */
+export function threadOutputURL(
+  threadId: string,
+  virtualPath: string,
+  download = false,
+) {
+  checkThreadFile(threadId, virtualPath);
+  return urlOfArtifact({ filepath: virtualPath, threadId, download });
 }
 
 async function* parseServerSentEvents(

@@ -1,66 +1,27 @@
-/**
- * Decisions about renders, runs and saves, kept pure so `node --test` covers them.
- *
- * A render outcome is what page.js's renderSource resolves: `{ok, error?, engine?}`
- * or `{superseded: true}`. `engine` marks a failure of the engine itself (the
- * wasm did not load, the Worker crashed, the time limit ran out), which says
- * nothing about the OpenSCAD file.
- */
-
-const ENGINE_CODES = new Set(["worker", "wasm", "timeout", "disposed"]);
-
-/** True for an engine or infrastructure failure code from scad-client.js. */
-export function isEngineFailure(code) {
-  return (
-    typeof code === "string" &&
-    (ENGINE_CODES.has(code) || code.startsWith("load:"))
-  );
-}
+/** Decisions about runs and versions, kept pure so `node --test` covers them. */
 
 /**
- * Whether to store this outcome as the version's render. Engine failures never
- * are (they would spend the automatic repair and block Finalize for a correct
- * file); a good render replaces a stored failure.
+ * Whether a prompt turn ended without a new version folder, so the preview did
+ * not change: the model answered in text, asked a question, or its render
+ * failed before cadkit made the folder. A stopped or failed run says so
+ * already, and a resumed run may have rendered before the page listed.
  */
-export function shouldReport(version, outcome) {
-  if (!outcome || outcome.ok === undefined || outcome.superseded) return false;
-  if (outcome.error === "closed" || outcome.engine) return false;
-  const stored = version?.render;
-  if (!stored) return true;
-  return stored.ok === false && outcome.ok === true;
-}
-
-/** One automatic repair, only after a prompt run the user did not stop and that did not fail. */
-export function shouldRepair(run) {
-  return (
-    run?.kind === "prompt" &&
-    !!run.failedVersion &&
-    !run.stopped &&
-    !run.state?.error
-  );
-}
-
-/** Versions the model wrote: its drafts and its repairs. */
-export const isDraftSource = (source) =>
-  source === "model" || source === "repair";
-
-/**
- * Whether a prompt or repair turn ended without saving a draft, so the preview
- * did not change: the model answered in text, asked a question, or built the
- * part some other way. A stopped or failed run says so already; a resumed run
- * may have drafted before the page knew its versions.
- */
-export function endedWithoutDraft(run, versions) {
-  if (run?.kind !== "prompt" && run?.kind !== "repair") return false;
+export function endedWithoutVersion(run, newest) {
+  if (run?.kind !== "prompt") return false;
   if (run.stopped || run.state?.error) return false;
-  return !versions.some(
-    (version) => isDraftSource(version.source) && !run.known.has(version.id),
-  );
+  return (newest ?? 0) <= (run.newestBefore ?? 0);
 }
 
-/** After a save: try again only for edits made since the attempt, never the same failed text. */
-export function shouldRetrySave({ now, attempted, running }) {
-  return !running && now !== attempted;
+/**
+ * The version to show after a listing: the newest while the user follows it
+ * (the default, and after picking the newest), else the one they picked while
+ * it still exists. Null when the design has no version yet.
+ */
+export function pickVersion(numbers, { selected = null, follow = true } = {}) {
+  if (!numbers.length) return null;
+  const newest = numbers[numbers.length - 1];
+  if (follow || selected === null || !numbers.includes(selected)) return newest;
+  return selected;
 }
 
 /**

@@ -20,6 +20,40 @@ export type SurfaceModels = {
   list: Array<{ name: string; display_name?: string }>;
   defaultName?: string;
 };
+/** One entry of a listed thread outputs folder; links are reported, never followed. */
+export type SurfaceThreadFileEntry = {
+  name: string;
+  /** Virtual path: the listed folder, `/`, then `name`. */
+  path: string;
+  kind: "directory" | "file" | "symlink" | "other";
+  /** Bytes for regular files, otherwise null. */
+  size: number | null;
+  modified_at: string | null;
+};
+/**
+ * Read-only access to a thread's `/mnt/user-data/outputs/` tree through the
+ * host's authenticated, owner-checked file routes; usable while a run is active.
+ */
+export type SurfaceThreadFiles = {
+  /** One folder, directories first. Rejects with `status` 404 when it does not exist. */
+  list: (
+    threadId: string,
+    virtualPath: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<SurfaceThreadFileEntry[]>;
+  /** The file's bytes, at most `maxBytes` (default and ceiling 25 MiB). */
+  read: (
+    threadId: string,
+    virtualPath: string,
+    options?: { signal?: AbortSignal; maxBytes?: number },
+  ) => Promise<ArrayBuffer>;
+  /** The authenticated artifact URL, for a link or an `<img>`. */
+  url: (
+    threadId: string,
+    virtualPath: string,
+    options?: { download?: boolean },
+  ) => string;
+};
 export type SurfaceContext = {
   namespace: string;
   locale: string;
@@ -43,6 +77,8 @@ export type SurfaceContext = {
     runId: string,
     options?: { signal?: AbortSignal },
   ) => AsyncIterable<RunStreamEvent>;
+  /** A thread's output files; only paths under /mnt/user-data/outputs/. Older hosts omit it. */
+  threadFiles?: SurfaceThreadFiles;
   /** The host's current model list, read live; empty while it is still loading. */
   models?: SurfaceModels;
 };

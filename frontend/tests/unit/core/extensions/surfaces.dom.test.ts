@@ -191,3 +191,63 @@ test("a full-layout surface root fills its host and models pass through", () => 
   expect(models).toEqual([{ name: "a", display_name: "A" }]);
   expect(root.style.height).toBe("100%");
 });
+
+test("thread file reads carry the page signal and stop with the page", async () => {
+  const seenSignals: AbortSignal[] = [];
+  const files = {
+    list: rs.fn(async (_t: string, _p: string, signal: AbortSignal) => {
+      seenSignals.push(signal);
+      return [];
+    }),
+    read: rs.fn(
+      async (_t: string, _p: string, signal: AbortSignal, max?: number) => {
+        seenSignals.push(signal);
+        return new ArrayBuffer(max ?? 0);
+      },
+    ),
+    url: rs.fn((t: string, p: string, download?: boolean) =>
+      [t, p, String(download)].join("|"),
+    ),
+  };
+  let later!: NonNullable<
+    Parameters<Parameters<typeof mountSurface>[1]["mount"]>[1]["threadFiles"]
+  >;
+  const own = new AbortController();
+  const cleanup = mountSurface(
+    document.createElement("div"),
+    {
+      id: "designs",
+      slot: "page",
+      title: "Designs",
+      mount(_root, context) {
+        later = context.threadFiles!;
+        return { dispose: rs.fn() };
+      },
+    },
+    {
+      namespace: "cad-design",
+      locale: "en",
+      settings: {},
+      callBackend: rs.fn(),
+      threadFiles: files,
+    },
+    rs.fn(),
+  );
+  const path = "/mnt/user-data/outputs/design";
+  expect(await later.list("t", path, { signal: own.signal })).toEqual([]);
+  expect(
+    (await later.read("t", `${path}/v1/a.stl`, { maxBytes: 8 })).byteLength,
+  ).toBe(8);
+  expect(later.url("t", `${path}/v1/a.stl`, { download: true })).toBe(
+    `t|${path}/v1/a.stl|true`,
+  );
+  own.abort();
+  expect(seenSignals[0]?.aborted).toBe(true);
+  expect(seenSignals[1]?.aborted).toBe(false);
+  cleanup();
+  expect(seenSignals[1]?.aborted).toBe(true);
+  await expect(later.list("t", path)).rejects.toThrow();
+  await expect(later.read("t", `${path}/v1/a.stl`)).rejects.toThrow();
+  expect(files.list).toHaveBeenCalledTimes(1);
+  expect(files.read).toHaveBeenCalledTimes(1);
+});

@@ -1,6 +1,6 @@
 ---
 name: cad-modeling
-description: Use this skill when the user asks for a physical part, mechanism or 3D model as a file (a stand, bracket, enclosure, hinge, clip, adapter or knob to print; "make me an STL of…", "I need a STEP of…"), or to change one made earlier. Runs a loop in the conversation's container: propose the mechanism, get the user's pick, write multi-body OpenSCAD, render each body, check clashes through every pose and swing by numbers, look at sections and a shaded render, check print and strength, fix, re-render and deliver. Needs a shell with openscad (the CAD sandbox image); not for images, diagrams or 2D drawings.
+description: Use this skill when the user asks for a physical part, mechanism or 3D model as a file (a stand, bracket, enclosure, hinge, clip, adapter or knob to print; "make me an STL of…", "I need a STEP of…"), or to change one made earlier. Runs a loop in the conversation's container that proposes the mechanism, gets the user's pick, writes multi-body OpenSCAD, renders each body, checks clashes through every pose and swing by numbers, looks at sections and a shaded render, checks print and strength, fixes, re-renders and delivers. Needs a shell with openscad (the CAD sandbox image); not for images, diagrams or 2D drawings.
 ---
 
 # CAD Modeling

@@ -158,7 +158,7 @@ External: none
 Tests: backend/tests/test_artifacts_router.py, backend/tests/test_artifact_capture_middleware.py, backend/tests/test_artifact_archive.py, frontend/tests/unit/core/artifacts/api.test.ts, frontend/tests/unit/core/artifacts/binary-preview.test.ts, frontend/tests/unit/components/workspace/artifacts/plugin-artifact-preview.dom.test.tsx, frontend/tests/e2e/artifact-preview.spec.ts, frontend/tests/e2e/office-preview-navigation.spec.ts, frontend/tests/e2e/cad-preview.spec.ts
 
 ### CAD model preview
-What: a `.glb` or `.stl` file, the CAD module's output among them, opens as a model you can rotate in the artifact panel, the reader and the Files view, with its bounding box in millimetres and no motion of its own; a bundled browser extension (three.js) parses each file in a Worker that checks every count before it allocates, and the original still downloads.
+What: a `.glb` or `.stl` file, the CAD design page's versions among them, opens as a model you can rotate in the artifact panel, the reader and the Files view, with its bounding box in millimetres and no motion of its own; a bundled browser extension (three.js) parses each file in a Worker that checks every count before it allocates, and the original still downloads.
 Entry points: artifact panel, /artifacts/view, the Files view; make extension-disable NAME=cad-preview
 Files: examples/deerflow-extension-cad-preview/**, backend/extensions/sources/deerflow-extension-cad-preview/**
 Data: thread outputs directory (read through the artifact route)

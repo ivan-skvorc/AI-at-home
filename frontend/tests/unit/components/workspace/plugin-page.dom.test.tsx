@@ -130,4 +130,5 @@ test("the surface reads the host's current model list and preferred model", asyn
   ]);
   expect(context.models?.defaultName).toBe("smart");
   expect(typeof context.joinRunStream).toBe("function");
+  expect(typeof context.threadFiles?.list).toBe("function");
 });
