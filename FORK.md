@@ -3008,10 +3008,13 @@ opinion.
 **3. The classification fails closed.** `OFFLINE_ALLOWED_TOOL_GROUPS` is an
 allowlist of groups that cannot reach the internet (`file:read`, `file:write`,
 `bash`, `media`, `knowledge`, `local_extensions`); a group that is not on it is
-dropped. `local_extensions` is what an extension's local-only tool declares (§51).
-The filter covers `config.yaml` tools: plugin tools are assembled apart from it
-and are offered offline whatever their group, so that name classifies a tool
-without yet changing what is offered. Rewriting
+dropped. `local_extensions` is what an extension's local-only tool declares. It
+came with the CAD module (§51), which is gone; no shipped plugin tool declares it
+now, and the name stays as part of the extension contract. The filter covers
+`config.yaml` tools: plugin tools are assembled apart from it and are offered
+offline whatever their group, so that name classifies a tool without yet
+changing what is offered. Closing that gap would also take the workflow tools
+out of offline chats, so it is its own change. Rewriting
 this as a blocklist of `{"web", "browser"}` passes every test that names a
 shipped group and silently ships the next provider group anyone adds — which, in
 a repo that merges upstream weekly, is a matter of time.
@@ -4905,7 +4908,10 @@ its real mode — a Plus run used to be labelled "Double Plus Ultracode run". Th
 price is context: the fixed request of an Ultracode run on a 32K model is now
 11,838 tokens (Plus) and 11,963 (Double Plus) of the 12,000 that §47 allows,
 measured with `shared_workspace: off` and with the bundled CAD tool (§51) on
-every request; the `read` and `write` sentences are about 25 and 15 tokens
+every request. That tool, about 150 tokens, was removed on 2026-11-25, so both
+figures predate the removal and today's are lower by about that much;
+`test_context_fit_critical.py` holds the current ones to the allowance. The
+`read` and `write` sentences are about 25 and 15 tokens
 longer, which the critical check now measures too. Two operational notes: `worker.py`, `service.py`,
 `lifecycle.py`, `recovery.py` and `postgres.py` are hashed into
 `runtime_version`, so a workflow left `recoverable` by the previous build cannot
@@ -5346,10 +5352,12 @@ figures were 11,354 and 11,434 until 2026-11-11, when the brief gained the
 limits the lead was never told and the extension a seventh tool (§44), and each
 figure rose by 144 on 2026-11-15, when the CAD module's tool began to ride every
 request (§51), and by 5 on 2026-11-16 with its loop wording and the `cad-modeling`
-skill's name in the index. `test_context_fit_critical.py` holds every mode and
-both workflows options to the allowance, and the CAD tool to 150 tokens of its
-own, so new brief or tool text has to replace old text; a count of spare tokens
-goes stale with the next prompt change, so none is quoted here.
+skill's name in the index. The CAD tool was removed on 2026-11-25 (§51, §58), so
+every figure above predates that and is lower now by about the tool's 150
+tokens; they were not measured again. `test_context_fit_critical.py` holds every
+mode and both workflows options to the allowance, so new brief or tool text has
+to replace old text; a count of spare tokens goes stale with the next prompt
+change, so none is quoted here.
 Measured with `shared_workspace: off` unless said otherwise.
 
 **The refusal says what is true.** It states the room the guard really allows,
@@ -5620,532 +5628,40 @@ conversation, a subagent, the non-mounted sandbox, an older host, the example's
 tool through a real `ToolNode`), the blocking-I/O test above, and the example
 package's own tests.
 
-### 51. A CAD module that builds a part without running the model's code
+### 51. A CAD module that builds a part without running the model's code (removed)
 
-**Why.** Mechanical parts were wanted out of the same chat: a script that can be
-edited, a STEP file for a CAD program, an STL for the printer. The default install
-gives the agent no shell on purpose (`LocalSandboxProvider`, `allow_host_bash:
-false`), so "write a script and run it" is not available where most people start,
-and an `exec` with trimmed builtins in the Gateway is not a boundary. The module
-therefore **reads** a CadQuery script and performs an allow-list of operations
-itself. CadQuery is the input because models already write it.
+**Removed on 2026-11-25.** This section described `examples/deerflow-extension-cad`:
+one tool, `cad_build`, that read a CadQuery script, performed an allow-list of
+operations in a child process of the Gateway, measured the STEP it wrote and
+handed over files only for a part that passed; the bundled snapshot, the `cad`
+uv group (about 1.7 GB of geometry kernel on every sync), the `--no-group cad`
+retries, the Gateway image's OpenGL blocks, `make doctor`'s test cube, and the
+`cad_eval` benchmark (`make cad-eval`) that graded it on ground truth. The
+section is in git history.
 
-**What.** `examples/deerflow-extension-cad`, bundled and on by default (below).
-One tool, `cad_build`: a part name, the script and the
-numbers the part must meet go in; pass or fail per check with measured values
-comes out, or the refusal with its construct and line. Files go through
-`ToolContext.write_output` (§50): the script and a report for every build; a
-picture, the GLB, STL and 3MF (for several bodies also a laid-out `.parts.3mf`)
-and the STEP, in that order, only when every check passed; and
-`<name>.failed.png` with `<name>.failed.glb` when the part built and a check
-failed. The package README holds the user's half: the allow-list, the limits,
-the install; `docs/guide/cad-parts.md` the picture, the print files and the
-printer profile.
+**Why it went.** The owner chose, on 2026-11-25, to follow the loop that proves
+itself on real parts: the agent writes parametric multi-body OpenSCAD, renders
+each body, checks the meshes by numbers and by eye, checks print and strength,
+and iterates. That loop needs a shell, so it runs in the per-thread container,
+and §58 records it. An allow-list reader refuses part of what models write
+(callables, the Sketch API, control flow that depends on a build), and checking a
+mechanism through its poses and sweeps needs the meshes where a script can move
+them. Keeping `cad_build` beside the container loop meant two CAD paths, and
+about 150 tokens on every request of every install for the one that was not
+used.
 
-**Built until it passes.** A real model's first script for a laptop stand used a
-`for` loop over its hinge links, was refused, and the conversation read as if
-the tool could not be run in a loop at all. Two things were missing. A script
-may now hold `for` loops over `range(...)` or a list it states: the reader
-unrolls them, pass by pass, into the same flat program, so nothing new reaches
-the kernel. And the build, read, repair, build again loop that the agent
-already ran by accident is now steered: `cad_build` counts the builds of a part
-within a run, holds the expected numbers of its first build, says when a change
-did not reach the failure, and ends **every** answer with what to do next,
-after a pass included, because a part that meets its bounding box is not yet
-the part that was asked for. The procedure around those answers is a skill,
-`skills/public/cad-modeling`: requirements written down before the first
-script, expected numbers worked out from them, one cause per repair, and a
-failed part reported as failed. Its operations page is generated from the
-allow-list. This follows the pattern of `image-refine` (§23): a loop the agent
-runs, with the count and the frozen criteria held by the tool.
-
-**Bundled and on by default.** Asking for a part should work on a fresh install
-and after an update, not after a command nobody knows about. The module ships the
-way the workflows extension does (§46): a committed snapshot in
-`backend/extensions/sources/deerflow-extension-cad` (the Docker build context
-excludes `examples/`), `cache-keys` over the package files so a `git pull` that
-changed only code rebuilds the installed copy, and an enabled, not required
-`plugins:` record in `config.example.yaml`. The dependency differs: it sits in
-a default group of its own, `cad`, because the kernel has wheels for fewer hosts
-than everything else in the lock. Its marker names the hosts that have them
-(Linux on x86-64 and arm64, Apple-silicon macOS); Windows and Intel Macs skip
-it. A Linux older than glibc 2.31 (RHEL 8, Debian 10) has no wheel either, and
-no marker can say so, while every start path syncs with `--locked`, which fails
-whole on one package without a wheel: the first version of this change stopped
-those installs from starting (found in review). `scripts/serve.sh`,
-`scripts/dev_multi_instance.sh` and `make install` therefore retry once with
-`--no-group cad`, which drops this module and nothing else. On a host without
-the package the record stays, the Gateway starts, and `make doctor` says to
-turn the record off.
-Existing installs get the record once from `config_upgrade.py` migration 73,
-which names `cad` alone: delivering "whatever the example lists" would bring back
-a workflows record an operator removed. A record that matches by name, module or
-package is left alone, so a module installed by hand keeps its settings.
-`config_version` is 73 for that migration; the chart copies follow. Like every
-structural migration, it rewrites `config.yaml` without its comments and keeps
-the original as `config.yaml.bak`. What it costs every install: about 1.7 GB of
-disk for the kernel (1.64 GB of the 2.6 GB environment the image's own sync
-line builds on `python:3.12-slim-bookworm`, measured), and its tool on every
-request on a window up to 64K, where the short tool form applies: `cad_build`
-may cost at most 150 tokens of every request
-(`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and that per-tool
-cap binds before the 32K composer allowance does. The first version of the tool
-cost 175 and put the workflows option `shared_workspace: read` 17 tokens over
-the allowance, which the critical check did not measure (found in review). It
-now carries the tool in every mode and measures both documented options. The module can be turned
-off, not removed: `make extension-remove` edits tracked files (the manager's
-own group, the lock), and the next `git pull` then stops on them.
-After editing the example, refresh the snapshot with a plain copy that leaves
-out `__pycache__`; `make extension-upgrade` re-runs `uv add`, which appends a
-second, unmarked group entry that Windows would then try to install.
-`uv.lock` is written by a newer uv than CI's pinned 0.11.1 (lock revision 5): a
-re-lock with the pinned version rewrites the revision and moves `boxlite`, so
-re-lock with a current uv, keep unrelated packages where they were, and check
-with the pinned one (`uv lock --check`).
-
-**The first build after an install or a restart.** Loading the kernel means
-reading about 1.2 GB of libraries from disk and, the first time, compiling
-about six hundred modules. Warm, that is two seconds. Seen once here, right
-after the packages were installed: the first build ran out of its 20 seconds
-still loading, the second took 12, the third under 3; the answer to the first
-said to simplify the part. A reviewer could not make compilation alone cost
-more than two seconds, so the disk is the larger part, and a slow or busy one
-is where this happens. What was done, in the order it was found to be needed:
-the worker marks the phase it is in, and a build stopped while still loading
-answers that the kernel was loading and to call again (what was read and
-compiled stays, so the next call is quick); after three such answers in a row
-in one conversation it says to stop and run `make doctor`, because on a host
-that can never load the kernel in time "call again" would not end; the
-self-test loads the kernel first, with 25 seconds of its own, so `make doctor`
-warms an install; and the Gateway image builds the test cube once while it is
-built, which proves there that the kernel loads and leaves the compiled modules
-in the image (the Helm Gateway runs as a user that cannot write them).
-Checked on `python:3.12-slim-bookworm` with uv 0.11.1: the locked install
-succeeds, and without the libraries the step prints its warning and the build
-goes on. The library steps and a passing test cube inside an image were not run
-(the build sandbox could not reach the Debian mirror); both pass on Ubuntu
-24.04, where the kernel maps exactly libX11 with its dependencies and the three
-dispatch libraries beyond the base system.
-
-**What the 2026-11-22 round added, and why each piece is shaped as it is.** A
-review of the open CAD items (roadmap items 46–59) found that the leverage was
-in what the module reads, measures and shows, not in a new way to run scripts.
-It shipped as one change set in separately reviewable commits, and each piece
-below keeps pass or fail where it was: on the re-imported STEP and the user's
-numbers.
-
-- **Scripts the way models write them (item 55).** The real handler refused
-  `w, d, t = 60, 40, 6`, `import math`, `p[0]`, `min(...)` and comprehensions,
-  and each refusal spent one of the eight attempts on arithmetic. The reader
-  now computes them itself: tuple assignment of plain names, `import math` in
-  that form only with a closed table (`pi`, `tau` and thirteen functions), and
-  `abs`, `min`, `max`, `round`, `int`, `float` and `len`, each by the reader's
-  own function on numbers it has already checked, never by a lookup on a
-  module, so the names cannot be rebound and `math.system` is refused. An index
-  is a whole number known when the script is read; a list comprehension has
-  one `for` over a range or a stated list and no `if`, and is unrolled item by
-  item, bounded by `MAX_SEQUENCE_ITEMS` and `MAX_WORK` rather than by loop
-  passes. A refusal names its construct in `error.refused` (`loft`,
-  `import os`), and an off-list method is answered with the nearest names, not
-  the whole table. Refusals still count toward the eight attempts, as the
-  `MAX_ATTEMPTS` comment budgets; the CAD eval counts them by construct before
-  a separate budget is argued. The script's top-level numbers go to
-  `report.json` as `parameters`, never into the answer.
-- **Operations that need no new trust (item 56).** `revolve`, `loft`, `sweep`,
-  `twistExtrude`, `wedge`, `transformed`, `spline`, the outline arcs,
-  `offset2D`, `end`, `first` and `last` take plain data or a part built earlier
-  in the script, and each row is a prefix of the kernel's positional order,
-  checked against 2.8.0's signatures. `combine` stays the boolean kind
-  everywhere, so the kernel's `"cut"` mode is `cut()`. A sweep's path must end
-  with an outline method, or be a helix: a path holding a solid is refused
-  before the kernel loads. The method list sits after the short form's cut, so
-  small windows pay nothing for it.
-- **Lettering and threads widen two SECURITY.md rules, each by one thing the
-  module owns (item 59).** Both are home-print staples, and both needed what
-  the boundary excluded. `text` has no `font` or `fontPath` in the table:
-  `build.py` passes the package's own font (`build.INJECTED`), because the slim
-  Gateway image has no system fonts and a path from a script would reach the
-  file system. The font is Liberation Sans 2.1.5 under the SIL OFL 1.1, half
-  the size of DejaVu Sans and with Arial's widths, which CadQuery names by
-  default; it came from Debian's `fonts-liberation` package because release
-  downloads were blocked where it was added, and `fonts/README.md` records its
-  SHA-256. `cq.Wire.makeHelix` is the one constructor on `cq` besides
-  `Workplane`: the reader keeps its numbers as data (at most 200 turns), and
-  only `sweep`'s path takes the value. Threads shipped behind a gate, a valid
-  M8 × 1.25 and M24 × 3 thread each under five seconds in the kernel tests
-  (0.55 s and 0.60 s measured). Each widening landed as its own commit with its
-  SECURITY.md text, for review.
-- **Where the features are (item 57).** `measure_holes` computed each hole's
-  axis point and dropped it. Each hole now carries `at`, its entry point, and
-  `axis`, and the measurement adds the bounding-box corners, the centre of mass
-  and the area. A `hole_diameters_mm` entry may be `[d, x, y, z]`, any point on
-  the axis, so the schema did not change: it passes when a measured hole of
-  that diameter has its axis within max(0.05 mm, 0.1 % of the largest side) of
-  the point, matched one to one, and a miss names the nearest hole that no
-  other point took. A blind hole's point may not lie past its floor by more
-  than that tolerance (`past_floor_mm` on a miss), because h08's hole drilled
-  into the wrong end lies on the same line and passed; a point beside the part
-  on the entry side still places it. The answer
-  lists at most 12 holes (four add about 50 tokens, pinned at 120), and
-  `report.json` holds every hole once, with what made it: the module's and
-  CadQuery's versions, the script's SHA-256 and the files of the set. The
-  checks moved into `checks.py`, which needs neither the extension API nor the
-  kernel to import, so `measure_cli` (`python -I -m
-  deerflow_extension_cad.measure_cli <step> [truth.json]`, under the worker's
-  limits) and the CAD eval judge a STEP exactly as `cad_build` does.
-  Fillet reach: `build.selections()` counts, for each fillet and chamfer the
-  result is made of, the edges the kernel took and the edges the part had then
-  (`measured.selections`, `{line, method, edges, of}`, all in `report.json`).
-  The answer names one only when it took more than four edges and not every
-  edge (`EDGES_SAID_ABOVE`), at most `MAX_LINES_SAID` notes of about 26 tokens
-  each, so the usual four-corner fillet costs nothing.
-- **The picture (item 53).** Nothing looked at the part, and a feature on the
-  wrong face passes every number. `render.py` draws a 960 px sheet, iso, top,
-  front and right at one scale, with numpy and Pillow alone: VTK's offscreen
-  path has no EGL or OSMesa in the image, and a software z-buffer takes about
-  0.2 s on a 17,600-triangle enclosure. It reads the exported STL, so the
-  picture is the printed file, and it is byte-identical for the same STL. The
-  footer gives the measured size with a plain `x`, because Pillow's built-in
-  font, the one every host has, draws no multiplication sign. A failed build is
-  drawn in orange under a banner naming its failed checks. The reply shows the
-  PNG inline through the existing outputs rendering, and a vision model is
-  asked to look at it once, at review (`NEXT_PICTURE`), not on every attempt.
-- **Ready to print (item 54).** `printability.py` reads the STL's arrays: bed
-  contact, overhang past the printer's angle with the bed left out, a sampled
-  thinnest wall, watertightness, the best of the six faces down when it at
-  least halves the overhang, the fit to the bed, and grams. Notes come only past
-  fixed thresholds. The printer is operator configuration (`printer:` in the
-  CAD record), bounded per key, which the API cannot write and which costs no
-  tokens. The kernel writes the 3MF natively in millimetres, and `build.export`
-  scales the GLB's scene roots by 0.001, because glTF is metres and a 40 mm
-  part read as 40 m in every viewer; the viewer (§56) reads that scale. One
-  wall estimate is used, `printability.thinnest_wall_mm`: it is deterministic
-  and reads the file the slicer gets, while `measure.sampled_wall` is bounded
-  by a clock, so its value moved with the machine's load and it could add a
-  second to every build. A part of several bodies is judged body by body, each
-  standing on the bed as `.parts.3mf` lays it out (`assess_apart`, meshes read
-  from the 3MF's per-body objects, `printed_apart: true`): on the merged STL a
-  part split for the bed was still too tall, open where its halves touch and
-  400 mm² overhanging, and the notes sent the model to split it again. Bodies
-  share the wall rays by area. Welded connected components of the STL would not
-  do: touching bodies weld into one. `build.export` renumbers the kernel's 3MF
-  objects from 1 and adds the `rels` and `model` default content types, because
-  lib3mf refused every file the kernel wrote (`normalise_3mf`).
-- **Several bodies (item 51).** The first real request was a print-in-place
-  laptop stand. `bodies` (1 to 20) makes the check "closed solids", exactly n
-  valid closed solids, with the volume their sum and the box their union; with
-  one body every sentence is as before. Each body's holes are measured against
-  that body alone, so a captive pin does not fill its bore. The smallest gap is
-  a note, never a check: a gap of zero already fails the count, because
-  touching bodies fuse. `<name>.3mf` keeps the kernel's one object of N
-  components for printing in place, and `<name>.parts.3mf` rewrites the build
-  items so each body stands on the bed 5 mm apart, translation only, falling
-  back to one STL per body (at most eight). `split` is a keyword-only row,
-  because the kernel reads a positional part as a cutting tool, which is
-  `cut()`'s job.
-- **The skill (item 58).** `SKILL.md` asks only for dimensions that decide the
-  shape, never for printer facts, and shows a draft's picture before details
-  are argued; hole allowances, fits, walls and overhangs come from
-  `references/fdm.md` (ISO 273, 4032, 4762 and 10642; the heat-set insert
-  column is labelled typical, since vendor tables could not be fetched), parts
-  are built in print orientation, and a fit-test coupon is offered when a part
-  must fit real hardware. The front matter is unchanged, so it costs nothing
-  per request; `SKILL.md` is pinned at 10 KB and `fdm.md` at 6 KB.
-- **A delegated part (item 47).** A subagent inherits `write_file`, so a
-  `.report.json` or a `.step` is no evidence it built anything. The generic
-  acceptance leaf `tool_result:<namespace>/<tool> <field>=<JSON scalar> [where
-  <arg>=<JSON scalar>]` reads the host-stamped answer instead: the newest
-  matching call decides, and a missing, truncated or compacted answer is
-  UNVERIFIED. It adds nothing CAD-specific to core (see
-  `subagents/ACCEPTANCE_CHECKS.md`), and the `task` description did not change
-  by a byte; `references/delegation.md` carries the recipe, one part name per
-  subagent, Ultra only. The leaf matches `where` exactly and records no other
-  argument, so `holds` says the subagent's newest build of that exact name
-  passed against numbers the subagent chose (a reviewer's subagent passed with
-  a 10 mm cube for a 60 × 40 × 6 bracket); the recipe has the lead build the
-  returned script once against its own numbers before calling the part
-  finished, which also covers a rebuild under a case variant of the name.
-  Binding the numbers in the leaf would need an assertion clause on the
-  deciding call, not a second `where`, which filters and would let an early
-  pass decide. Plus Ultracode is later work: its workflow agents run
-  on child threads where acceptance criteria are not checked, so it needs merge
-  workspaces and host evidence on the workflow record.
-- **The CAD eval (item 48).** `cad_build`'s pass is graded on the model's own
-  numbers. `make cad-eval MODEL=...` (`docs/guide/cad-eval.md`) sends 22 part
-  specs to the running agent and re-measures each delivered STEP through
-  `measure_cli` against truth derived from a reference part. The specs and
-  references are original: CadQueryEval's code is MIT, but the licence of its
-  task data is unconfirmed, so it is cited and not vendored. The offline half
-  shipped; the live rows (a local 32K model and a cloud model at k=3, a
-  baseline row on the module as it was before this round, two runs that agree
-  within the interval) are roadmap item 48.
-
-**The decisions, and what was rejected.**
-
-- **Read, then perform.** `interpreter.compile_script` turns the text into a flat
-  list of allow-listed operations with plain-data arguments; `build.run_program`
-  performs them. A script has no branches, functions or `while`, and a `for`
-  loop runs over a range or a list the script states, so every number is
-  known before the kernel starts and a refusal costs no geometry. Rejected:
-  `exec` with restricted builtins, a Gateway-side MCP server that runs scripts
-  (the same shortcut), and a purpose-built command format (models write CadQuery).
-- **A loop is unrolled, and `if` stays out.** What a loop runs over is known
-  when the script is read, so unrolling it changes what a script may say in
-  fewer lines and not what it may do. A branch on a number the script states
-  could be read the same way, and was left out: each construct widens the
-  reader, and arithmetic already says the usual cases (`(-1) ** i`). A branch
-  on a measurement cannot be read at all.
-- **The loop is the agent's, the count is the tool's.** One call stays one
-  build inside the host's 30 seconds. A tool that looped inside itself would
-  need the model's judgement between builds, which it does not have. What a
-  model loses over a long loop is state, so that is what the tool holds: the
-  attempt number, the first expected numbers, the last failure. Rejected: a
-  hard refusal after the limit (the user may ask for more, and the next message
-  is a new run) and failing a part whose expected numbers moved (a first number
-  can be worked out wrongly, and then the correction is right). Both are said
-  in the answer instead.
-- **Everything in a child process.** Parsing included: the Gateway neither parses
-  hostile text nor loads a 450 MiB kernel, and starts as fast with the module as
-  without it. The parent holds the wall clock and kills the process group,
-  because a kernel call holds the interpreter for its whole duration and nothing
-  inside the child can interrupt it.
-- **The tool decides.** The STEP that was written is imported again and measured:
-  one valid closed solid (or the number of bodies asked for), bounding box,
-  volume, holes. Measuring the file, not the
-  object in memory, is what makes "a STEP listed in a `cad_build` answer means a
-  part that passed" true. It is not a statement about every `.step` in the
-  outputs: an earlier build's STEP stays when a later one fails, and an agent
-  with file tools can write one itself. Expected holes are one list, a diameter
-  or a diameter with a point on its axis per hole, which carries the count.
-- **One named offline group.** `local_extensions` joins
-  `OFFLINE_ALLOWED_TOOL_GROUPS` and `cad_build` declares it. `media` is not
-  reused: it means the local ComfyUI service.
-- **Three libraries, not `libgl1`.** The kernel links `libGL.so.1`, `libGLX.so.0`
-  and `libGLdispatch.so.0` and never renders. `apt-get install libgl1` satisfies
-  that and brings Mesa and LLVM behind `libglx0` (183 MiB on Ubuntu 24.04,
-  measured), so the Gateway image unpacks the three dispatch packages alone,
-  about 1.5 MB, and a failure there only warns.
-
-**What must not be simplified away.**
-
-- **No value from a script reaches a lookup.** The interpreter contains no
-  `getattr`; the one in `build.py` takes a name that is a key of the table. A
-  second one is how an allow-list stops being one.
-- **The node whitelist runs before evaluation, iteratively.** A recursive walk
-  overflows on a legal but deep tree, and `ast.parse` itself fails three ways on
-  hostile nesting; all are refusals, not crashes.
-- **Characters that move a line or reorder it are refused in the whole text,
-  comments included; a script holds one statement per line and no padding.** A
-  form feed, a lone carriage return or a line separator starts a line for the
-  parser and not for a viewer, a direction override reorders what a viewer
-  draws, and a second statement after a semicolon, or a chained call behind
-  nine hundred blanks, decides the part unseen. The `.py` file kept beside the
-  part must read as it was read. Joiners (Persian, Hindi, emoji) stay allowed:
-  they can occur only in a comment and move nothing.
-- **An operation that empties the part, or one that changes nothing, fails the
-  build.** CadQuery leaves an empty compound after a cut that removes
-  everything, and `findSolid()` then walks back to the part as it was before:
-  the untouched block passed every check (found in review). A pocket cut away
-  from the part, a hole drilled beside it, or posts drawn inside the floor
-  passed the same way on a bounding box alone. `build.py` checks the volume and
-  the face count after each operation the result is made of. A harmless repeat
-  (the same hole drilled twice) is refused with them, on purpose: nothing can
-  tell it from a miss, and the message says to delete the line.
-- **Material or air is decided by counting crossings on generic rays.** The
-  kernel's point classifier picks its rays from the faces; on a grid of holes
-  they run through the seam of every wall in a row and it retries hundreds of
-  times (0.4 s a point, 28 s for one enclosure, past the wall clock). The
-  classifier is kept as the fallback and as the reference in the tests.
-- **A gap between two hole walls is air from end to end, or they are two
-  holes.** Probing only the middle of the gap read two blind holes facing each
-  other across a cavity as one through hole.
-- **Arguments are typed by the table, not by the kernel.** CadQuery accepts
-  `centered="abc"` and reads `extrude(True)` as 1. Non-finite numbers hang or
-  crash it. Every argument is checked against its kind first.
-- **Pattern caps are sized for the slow idiom, and the wall clock is the
-  bound.** `circle().cutThruAll()` on a pattern is about 25 times slower than
-  `hole()` at 100 points and worse above; the caps (100 per call, 200 per script) keep the ordinary idioms
-  inside the build time. They cannot bound every script: `vertices()` on
-  construction geometry multiplies the points on the stack, which no reading of
-  the text can count. The parent's kill of the process group is what holds.
-- **The shape is exported, not the Workplane.** Exporting a Workplane after
-  `shell()` writes bare shells and the STEP holds no solid.
-- **A hole is decided by geometry**, by the rule at the top of `measure.py`.
-  Counting cylindrical faces counts fillets and bosses.
-- **STEP is written last.** A part whose files the host would not store in full
-  is not presented as delivered. The script is written first and names the set;
-  when it cannot be stored, nothing is.
-- **The mesh is sized for the host's file cap.** A part dense with small fillets
-  gives a 10 MB STL at 0.1 mm, over the default 8 MiB per file, so a correct
-  part failed with advice to fix its script. The worker meshes coarser until
-  the STL is under 6 MiB, clears the finer mesh first (the kernel would reuse
-  it), and checks the triangle count against the file size: the kernel's writer
-  does not report a write the operating system cut short.
-- **The kernel works on several cores.** A processor-time limit of the wall
-  clock plus ten seconds stopped honest builds at nine seconds and the answer
-  blamed memory. The backstop is the wall clock times the cores, so only the
-  parent's clock stops a build while the parent lives. Builds also take slots
-  (`parallel_builds`): more of them than the machine carries all time out
-  together, each told to simplify a part that was fine.
-- **The whole process group is killed, also after a worker that finished.** The
-  worker starts no process; one that exists means the kernel was made to.
-- **The description is paid on every request.** `cad_build` may cost at most
-  150 tokens of every request
-  (`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and that per-tool
-  cap binds before the 32K composer allowance does. The opening sentence was
-  rewritten to say what a script may contain, which is also what a small model
-  reads, and the 10 tokens it saved (146 to 136, measured 2026-11-22) paid for
-  `bodies` (136 to 144); a `min_gap_mm` parameter as well would have made 152,
-  so the clearance comes from the printer profile at no cost. The array parameters carry no item
-  types for that reason; the handler checks each number. Parameter names say what they hold instead of carrying descriptions.
-  A small model gets the sentences before `Methods:` only, so "assign the part
-  to result" moved behind the method list: the reader falls back to the last
-  part assigned. The critical check pins it.
-- **A loop is the statements written out.** `test_a_loop_is_the_same_program_as_its_statements_written_out`
-  compares the two programs. A loop that could do more than its expansion would
-  be a second language inside the reader. Passes are capped (1,000 in a script)
-  apart from the 300 operations, because a loop of arithmetic performs none.
-- **One line of a loop is many operations, so a failure names the pass.**
-  Without it the model is told that line 11 failed and cannot tell the first
-  hole from the sixth. The clause is exact and short: a whole number as it is,
-  a decimal in full, a long point cut, at most 240 characters for every loop
-  around the failure. A loop value of 400 numbers once made a refusal of 22,000
-  characters. A repeated pass is told to leave the pass out, not to delete the
-  line, which is every pass.
-- **Passes do not bound reading; the work budget does.** A body that walked
-  long lists a thousand times took fifteen seconds to read inside every other
-  cap. `MAX_WORK` counts statements and values read and list items walked.
-- **Indentation is checked, because with loops it carries meaning.** Every
-  statement starts its own line, a body is one block under its `for`, and a
-  line is indented at most 80 columns with a tab counted as eight. Without
-  these a statement could sit beside the end of a header, be carried into a
-  loop from the margin by a backslash, or lie 950 columns to the right.
-- **A loop can pass with its work dropped, so the answer says so.** Each pass
-  starting from the same part keeps the last pass only, and a bounding box does
-  not notice: a plate asked for with six slots passed with one. `build.left_out`
-  counts those passes and the bodies never joined; both are notes, because a
-  trial cut outside a loop is legitimate. A cutter moved on after its last cut
-  is not work dropped, and neither is a part put together again in every pass:
-  the rule compares one call's outcome across the passes of its loop. Over the
-  71 loop scripts the reviewers wrote, 37 correct ones stay quiet and 32 of 34
-  lossy ones are reported; the two it misses cannot be told from a tool made
-  ready (a fencepost, and a single pass used by a trial).
-- **Parts are counted by name, not by file stem.** The stem is ASCII and cut at
-  forty characters: every Chinese or Cyrillic name was the same part, and the
-  first build of a lid was told to stop after seven builds of a bracket. Only
-  case, width, spacing and invisible characters are set aside: a key that drops
-  punctuation makes "+0.1" and "-0.1" one part.
-- **Moved numbers are compared exactly.** A tolerance there, however small,
-  is the size of some feature on some part.
-- **Every answer ends with what to do next, and the sentences are pinned.**
-  They are the loop's control. `test_builds_of_a_part_are_counted_and_the_answer_says_when_to_stop`
-  and its neighbours fix each sentence to its state; the skill's test quotes
-  the same words.
-- **The first expected numbers are held until the part passes.** A new run
-  starts the count over and keeps the numbers: "keep going" is not a new
-  request. Only a pass followed by the user speaking again releases them.
-- **The checked answer is written before anything that follows the checks.**
-  The worker writes a `built` result, then draws the picture and runs the print
-  check, each skipped with a note when under three seconds of the build's time
-  remain; on a timeout in either, the parent delivers the built result with a
-  note. A renderer forced to fail and a timeout while drawing are both tests
-  (`test_a_picture_that_cannot_be_drawn_costs_the_part_nothing`,
-  `test_a_build_stopped_while_its_picture_is_drawn_still_delivers_the_checked_part`).
-- **The print block never decides.** `decide()` does not read it, and
-  `test_the_print_block_never_decides` compares `passed` with and without it.
-- **The GLB's root scale is the viewer's contract.** The viewer's e2e fixtures
-  are generated from this module and committed, so an export that drops the
-  scale still passes the viewer's spec; the kernel test
-  `test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres` is what
-  catches it.
-- **`checks.py` stays importable without the host.** `test_checks.py` runs
-  `decide()` and `measure_cli` as a program with `deerflow_extension_api` made
-  unimportable; the CAD eval measures through it, and roadmap item 50 would.
-- **The font and the helix stay the module's.** `font` and `fontPath` stay out
-  of the table, lettering stays printable ASCII of at most 64 characters counted
-  in `MAX_WORK`, and a helix is taken only as `sweep`'s path.
-
-**Known gaps.** The internet switch does not filter plugin tools at all: an
-extension tool in the default `extensions` group is still offered offline, the
-HTTP-calling examples included. Closing that would also remove the workflow tools
-from offline chats, so it is its own change. The dev image stage
-(`make docker-start`) gets the same libraries by a step of its own, written and
-not built. A Kubernetes install from the chart has no `plugins:` block and so
-does not turn the module on, as with workflows. An install that added the
-module by hand before it was bundled has local changes in `backend/pyproject.toml`
-and `backend/uv.lock` and an untracked snapshot, and `git pull` stops on them;
-the CHANGELOG entry carries the three commands that clear it. A pattern of which
-some instances miss the part still passes unless the holes are declared, since
-the volume changed. An outline nobody used is a note in the answer, not a
-failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
-a correct part. Holes are measured and checked where they are, but a pocket's
-depth and the positions of pockets, bosses and slots are not checked at all;
-`unchecked` in the answer shows what was measured and not asked about. An event
-loop that is stopped and closed without cancelling its tasks leaves the worker
-to the processor backstop and its directory behind. Windows gets neither the
-process-group kill nor the limits. The attempt count and the held numbers live
-in Gateway memory, by part name: a restart forgets them, and a model that
-renames the part on every attempt starts a new count each time. A feature other
-than a hole on the wrong face passes every check; the picture is where it shows,
-and the skill places every feature from the part's origin
-(`workplane(origin=(0, 0, 0))`; the centre of a face moves when a cut splits
-it). A selector takes every matching edge on the part as it is at that line, so a
-fillet on `edges("|Z")` after a rim was added rounds the rim too and the volume
-comes out as worked out; the answer names such a fillet by its edge count (item
-57, below), but a selection of too few edges is shown only by the report and the
-picture. A build that runs out of time is
-told what it was doing when the clock ran out, which is not always what took
-the time. Not exposed, each for its reason: `sweep`'s `normal` and `auxSpine` (a
-kernel vector, a second rail), `spline`'s arguments past `periodic`,
-`offset2D`'s `"tangent"` kind (`"intersection"` gives the same sharp corners),
-`text`'s `kind` (one font file letters bold and italic as regular), `split` with
-a part (`cut()` does it), `parametricCurve`, `each`, `eachpoint` and `cutEach`
-(callables), `sketch` and `placeSketch`, and every constructor on `cq` but
-`cq.Wire.makeHelix`. CadQuery's 3MF writer writes each face's vertices apart,
-so a slicer may report a repair; `normalise_3mf` renumbers the objects from 1
-and adds the default content types, and a pass that welds the vertices is not
-written. `measure.sampled_wall` is a library function the worker does not call
-(the print block's wall comes from `printability.py`). The print thresholds and
-the skill's clearance and nut tables have not been checked on a real printer;
-that is the fit-test coupon, printed on the owner's printer. The skill has not
-been run on a real model here: roadmap item 48's first live run (a plate, an
-L-bracket and an enclosure on one cloud model and one local 32K model, scored
-on ground truth) is still open, and so is whether a vision model gains from the
-picture, which that run counts in `view_image` calls; reviewer agents following
-the skill built eleven parts, each within the limit, with positions checked by
-geometry on four of them. A live Ultra delegation under `delegation.md`'s
-criterion has not been run either; the offline tests drive the real subagent
-executor with a scripted model.
-
-**On an upstream sync.** The package is fork-only. `internet_access.py`,
-`doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and
-the frontend catalog carry additive blocks, and `extension-package-check.yml` a
-20 minute limit: the job installs the kernel and builds real parts. The bundling
-adds the `cad` group, its name in `default-groups` and one line in
-`[tool.uv.sources]` of `backend/pyproject.toml`, the lock entries, the `plugins:`
-record, migration 73, the `--no-group cad` retry in `scripts/serve.sh`,
-`scripts/dev_multi_instance.sh` and the `install` target, a third Dockerfile
-block in the dev stage, and a longer doctor limit in `scripts/support_bundle.py`. A sync that touches the example fails `test_bundled_cad_extension.py` until
-the snapshot is refreshed. The package declares `numpy` and `pillow` for the
-picture and the print block (the lock already resolved both through the
-kernel's own dependencies), and its snapshot carries `fonts/`. The generic
-`tool_result` leaf lives in upstream's `acceptance_checks.py` and `executor.py`
-as additive blocks, wired through `task_tool.py` and batch acceptance; the eval
-is fork-only (`backend/scripts/benchmark/cad_eval/`, the `cad-eval` target).
-`cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
-check every allow-listed method against the kernel's own signature.
-
-Coverage: the package's tests (`test_interpreter.py`, `test_worker_process.py`,
-`test_build.py`, `test_measure.py`, `test_checks.py`, `test_render.py`,
-`test_printability.py` and `test_eval_specs.py`; those that build parts need the
-kernel), `backend/tests/test_bench_cad_eval.py` (the eval's scoring, offline),
-`backend/tests/test_acceptance_tool_result.py` (the generic leaf),
-`tests/skills/test_cad_modeling.py` (the skill against the module; it runs in
-Skill Review CI, and the operations page is compared again inside the Backend gate),
-`backend/tests/test_cad_extension.py`, `test_bundled_cad_extension.py`,
-`test_config_upgrade_script.py -k BundledCadPluginDelivery`, `test_cad_runtime_deps.py`,
-`blocking_io/test_cad_extension.py`, `TestCheckCadExtension` in `test_doctor.py`,
-and the CAD case in `test_context_fit_critical.py`.
+**What is left behind.** An operator's `cad` record in `config.yaml`, which
+migration 73 delivered, stays until config migration 79 removes it (matched by
+module and package, not by name); until then the Gateway logs that it cannot
+import the package and starts without it, or stops if the record was marked
+`required`. Migration 73 no longer delivers anything. The generic hooks the
+module brought stay, because they are not CAD-specific: `ToolContext.write_output`
+(§50, extension API 0.2.13), the `tool_result:<namespace>/<tool>` acceptance
+leaf for delegated deliverables (`subagents/ACCEPTANCE_CHECKS.md`,
+`docs/guide/subagents.md`), and the offline-safe `local_extensions` tool group
+(§27). The `cad-modeling` skill keeps its name and was rewritten for the
+container loop (§58). Re-adding an in-Gateway CAD interpreter is a reversal of
+the rule under §58, not a restoration.
 
 ### 52. Several conversations at once: select, move, archive, delete
 
@@ -6668,9 +6184,12 @@ re-enable winning, daily cadence), `test_change_cycle_doc.py`,
 
 ### 56. CAD models you can turn in the file preview
 
-**Why.** The CAD module (§51) ships bundled and on, and its GLB and STL files
-could only be downloaded: on a phone, looking at a part meant a second app. The
-picture §51 now draws covers the first look; this adds rotation. Roadmap item 46.
+**Why.** The CAD module (§51, since removed) shipped bundled and on, and its GLB
+and STL files could only be downloaded: on a phone, looking at a part meant a
+second app. Its picture covered the first look; this added rotation. Roadmap
+item 46. It now shows the bodies and `assembly.glb` that the `cad-modeling`
+skill's `cadkit.py` renders in the per-thread container (§58), and any other GLB
+or STL.
 
 **What.** `examples/deerflow-extension-cad-preview`, a browser-only package on
 the host's `artifactPreviews` contract, in the Office preview's layout: no tool
@@ -6681,13 +6200,13 @@ millimetres in the CAD frame (Z up). A failed GLB carries a banner naming its
 report. The package README holds the user's half (limits, units, build);
 `docs/guide/file-previews.md` the guide.
 
-**Bundled and on by default,** the way CAD is: a snapshot in
+**Bundled and on by default,** the way the CAD module was: a snapshot in
 `backend/extensions/sources/deerflow-extension-cad-preview`, an
 extensions-group entry and a `[tool.uv.sources]` path in
 `backend/pyproject.toml` with no platform marker (the Python half is a
 registration and the rest is built browser assets), an enabled `plugins:` record
 in `config.example.yaml`, and a `config_upgrade.py` migration that names
-`cad-preview` alone, as migration 73 does for `cad`: migration 76, so
+`cad-preview` alone, as migration 73 did for `cad`: migration 76, so
 `config_version` is 76 in the example and both chart copies. Like every
 migration that delivers a record, it rewrites `config.yaml` without its comments
 and keeps the original as `config.yaml.bak`; the release note says so.
@@ -6705,7 +6224,7 @@ and STL files go back to the download fallback.
   from jsdelivr at run time. Nothing is fetched from outside the server.
   `build.mjs` fails an asset over 3 MiB, under the host's 4 MiB cap.
 - **A package of its own.** Viewing a model needs no geometry kernel, and the
-  viewer reads any GLB or STL, not only the CAD module's.
+  viewer reads any GLB or STL, not only one CAD tool's.
 - **One self-contained module Worker per file.** Plugin assets are served with
   `Content-Security-Policy: sandbox`, so the Worker's origin is opaque: it can
   neither import further chunks nor fetch, and `new Worker(url)` needs a
@@ -6719,15 +6238,16 @@ and STL files go back to the download fallback.
   accessor, buffer view and index bounded, node cycles refused); an STL is
   binary whenever 84 + 50 n equals its length, even with a `solid` header.
   Feature edges are computed in the Worker and skipped above 600,000 triangles.
-- **GLB is metres and Y-up, STL millimetres and Z-up.** The CAD module writes
-  its GLB with a root scale of 0.001 (§51), so this viewer, like any glTF tool,
-  shows the real size; a GLB written before that change reads 1000 times too
-  large. A part of several bodies (one node each) is drawn whole in one draw
-  call, with a group range per node.
+- **GLB is metres and Y-up, STL millimetres and Z-up.** `cadkit.py` writes
+  `assembly.glb` in metres and Y-up from its millimetre, Z-up bodies (the CAD
+  module wrote a root scale of 0.001 for the same reason), so this viewer, like
+  any glTF tool, shows the real size; a GLB with millimetre vertices and no
+  scale reads 1000 times too large. A part of several bodies (one node each) is
+  drawn whole in one draw call, with a group range per node.
 - **No STEP preview.** An OpenCascade WebAssembly build is 7,604,031 bytes,
   over the per-asset cap, LGPL-2.1, cannot be fetched by an opaque-origin
-  Worker, and would tessellate differently from the kernel that measured the
-  part. The GLB is the preview and the STEP the download (roadmap.md,
+  Worker, and would tessellate differently from the kernel that wrote the
+  part. The GLB or STL is the preview and the STEP the download (roadmap.md,
   *Deliberately not*).
 - **One generic host change.** `frontend/src/core/artifacts/binary-preview.ts`
   throws a named `PreviewTooLargeError`, and `MountedPreview` says the file is
@@ -6756,8 +6276,10 @@ the owner's acceptance check. At 390 px the chat header's toolbar
 (`chat-instance.tsx`, a row that does not shrink) runs past the viewport behind
 the panel's sheet, with or without this package, so the spec checks page-level
 overflow only from 600 px up; it checks the viewer's own box at every width. A 3MF gets the download fallback. The bounding box is measured
-on the triangles, so a curved face can read up to the mesh tolerance under the
-CAD report, which measures the solid.
+on the triangles, so a curved face can read up to the mesh tolerance under a
+report that measured an exact solid. The `*.failed.glb` banner was named for the
+CAD module's failed builds; no shipped tool writes that name now, and it stays
+for any tool that does.
 
 **On an upstream sync.** The package is fork-only. Upstream owns the host files
 it touches: `binary-preview.ts` (the named error), `plugin-artifact-preview.tsx`
@@ -6781,7 +6303,7 @@ STL unchanged with the plugin absent or disabled); and
 `backend/tests/test_bundled_cad_preview_extension.py`, which also holds
 migration 76's cases (delivered once to an install on version 75, a removal
 that sticks, an operator's own record left alone); `test_config_upgrade_script.py`
-only pins the example's plugin order (`workflows`, `cad`, `cad-preview`).
+only pins the example's plugin order (`workflows`, `cad-preview`, `cad-design`).
 
 ### 57. A deviation monitor: a second model keeps the run on the request
 

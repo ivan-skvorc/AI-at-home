@@ -271,16 +271,20 @@ def _read_poses(path: Path | None, bodies: list[str]) -> dict:
         unknown = set(pose) - {"name", "place", "sweep"}
         if unknown:
             raise Unusable(f"{where}: unknown key(s) {sorted(unknown)}.")
+        if not isinstance(pose.get("place", {}), dict):
+            raise Unusable(f'{where}.place maps each body to its steps, like {{"lid": [{{"translate": [0, 0, 5]}}]}}.')
         for body in pose.get("place", {}):
             if body not in bodies:
                 raise Unusable(f"{where}.place: no body {body!r}; bodies are {bodies}.")
         sweep = pose.get("sweep")
         if sweep is not None:
+            if not isinstance(sweep, dict):
+                raise Unusable(f'{where}.sweep is an object, like {{"body": "lid", "direction": [0, 0, 1], "from": 0, "to": 30}}.')
             moving = sweep.get("bodies", [sweep.get("body")])
             if not moving or any(b not in bodies for b in moving):
                 raise Unusable(f"{where}.sweep: name the moving body (body) or bodies (bodies) from {bodies}.")
     ignore = data.get("ignore", [])
-    if not all(isinstance(p, list) and len(p) == 2 and all(b in bodies for b in p) for p in ignore):
+    if not isinstance(ignore, list) or not all(isinstance(p, list) and len(p) == 2 and all(b in bodies for b in p) for p in ignore):
         raise Unusable(f'{path}: ignore is a list of body pairs, like [["pin", "base"]].')
     data.setdefault("tolerance_mm3", 0.01)
     data["ignore"] = ignore
