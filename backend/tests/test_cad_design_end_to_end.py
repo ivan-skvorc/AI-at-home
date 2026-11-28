@@ -239,6 +239,10 @@ def _chat(client, context: dict[str, Any]) -> None:
     assert response.status_code == 200, response.text
 
 
+#: What the Designs page sends for Flash on the test model (the host's composer controls).
+FLASH = {"model_name": MODEL, "mode": "flash", "thinking_enabled": False, "is_plan_mode": False, "subagent_enabled": False}
+
+
 def _plugin_tools(call: dict[str, Any]) -> list[str]:
     return [name for name in call["tools"] if name and name.startswith("ext_cad_")]
 
@@ -253,7 +257,7 @@ def test_a_design_prompt_brings_the_brief_and_without_bash_the_setup_line(client
     assert (answer["folder"], answer["container"]) == ("/mnt/user-data/outputs/design", False)
     assert _action(client, "list_designs", {})["container"] is False
 
-    started = _action(client, "prompt", {"design_id": design["id"], "text": "A 30 x 20 x 10 mm block with a 5 mm cone on top", "model_name": MODEL, "mode": "flash"})
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A 30 x 20 x 10 mm block with a 5 mm cone on top", "context": FLASH})
     assert _settle(client, design["id"], started["run_id"]) == "success"
 
     (call,) = CALLS
@@ -274,7 +278,7 @@ def test_host_bash_is_no_cad_container(client):
 
     design = _action(client, "create_design", {"title": "Block"})["design"]
     assert _action(client, "get_design", {"design_id": design["id"]})["container"] is False
-    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "model_name": MODEL, "mode": "flash"})
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "context": FLASH})
     assert _settle(client, design["id"], started["run_id"]) == "success"
 
     (call,) = CALLS
@@ -288,7 +292,7 @@ def test_a_design_run_in_container_mode_gets_the_brief_alone(client):
 
     design = _action(client, "create_design", {"title": "Block"})["design"]
     assert _action(client, "get_design", {"design_id": design["id"]})["container"] is True
-    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "model_name": MODEL, "mode": "flash", "viewing": 1, "newest": 2})
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "context": FLASH, "viewing": 1, "newest": 2})
     assert _settle(client, design["id"], started["run_id"]) == "success"
 
     (call,) = CALLS
@@ -296,6 +300,35 @@ def test_a_design_run_in_container_mode_gets_the_brief_alone(client):
     assert DESIGN_BRIEF in call["system"] and NO_CONTAINER not in call["system"]
     (message, _) = _action(client, "messages", {"design_id": design["id"]})["messages"]
     assert message["text"].startswith("A plate\n\n[Designs page: the user is looking at v1 (/mnt/user-data/outputs/design/v1)")
+
+
+@pytest.mark.parametrize("client", ["container"], indirect=True)
+def test_the_page_run_context_reaches_the_run_and_a_forged_design_flag_is_replaced(client):
+    """Ultra as the page's controls send it: the lead agent can delegate, and the brief still arrives.
+
+    The page's ``plugin_options`` names another design. Were it kept, the
+    middleware would find no design for this thread and add no brief; keys the
+    host refuses from a plugin (``agent_name``) are dropped before the run.
+    """
+    from deerflow_extension_cad_design.notes import DESIGN_BRIEF
+
+    design = _action(client, "create_design", {"title": "Block"})["design"]
+    context = {
+        "model_name": MODEL,
+        "mode": "ultra",
+        "thinking_enabled": True,
+        "is_plan_mode": True,
+        "subagent_enabled": True,
+        "reasoning_effort": "high",
+        "agent_name": "someone-else",
+        "plugin_options": {"cad-design": {"design_id": "f" * 32}},
+    }
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "context": context})
+    assert _settle(client, design["id"], started["run_id"]) == "success"
+
+    (call,) = CALLS
+    assert DESIGN_BRIEF in call["system"], "the forged design flag replaced the design's own"
+    assert "task" in call["tools"], "the mode-derived context did not reach the lead agent"
 
 
 def test_the_owner_reads_a_version_folder_through_the_host_routes_the_page_uses(client):

@@ -36,6 +36,17 @@ images, its checks and its files.
 - **A message names an older version.** When the user writes while looking at
   an older version, the message tells the model which one
   (`prompt` with `viewing` and `newest`).
+- **The chat's model picker, mode and effort.** The composer row holds the
+  host's composer controls (`context.composerControls`): the same searchable,
+  sorted model picker, mode menu (Flash to Double Plus Ultracode; Democracy
+  starts from its own dialog) and reasoning-effort menu as the chat, with the
+  choice kept per page in this browser. Each prompt sends their `runContext()`
+  as `context`; `prompt` keeps only the keys the chat sends (model, mode,
+  thinking, plan mode, subagents and their limits, effort, Democracy roster,
+  other plugins' `plugin_options`), checks their types and bounds, drops the
+  rest, and always sets the `cad-design` option itself. On a host without the
+  controls the page shows no choice and the server's default model and mode
+  apply. The Gateway still enforces model access and the mode rules.
 - **The brief reaches only design runs.** A lead middleware at `MODEL_LOGICAL`
   appends a short design brief to the system message of a run whose
   `cad-design` option names a live design whose thread is the run's own;

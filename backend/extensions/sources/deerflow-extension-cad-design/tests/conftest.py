@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from deerflow_extension_api import AgentRun, AgentRunError  # noqa: E402
 
-from deerflow_extension_cad_design.actions import Designs  # noqa: E402
+from deerflow_extension_cad_design.actions import Designs, HostSandbox  # noqa: E402
 from deerflow_extension_cad_design.store import Store  # noqa: E402
 
 
@@ -26,7 +26,6 @@ class FakeRuns:
         self.cancelled = []
         self.status = "running"
         self.state = {"values": {"messages": []}}
-        self.files = {}
         self.refuse = None
         self.deleted = []
         self.delete_refuse = None
@@ -61,11 +60,6 @@ class FakeRuns:
     async def cancel(self, *, thread_id, run_id, execution_fence=None):
         self.cancelled.append((thread_id, run_id))
 
-    async def read_artifact(self, *, thread_id, path, expected_checkpoint_id=None):
-        if (thread_id, path) not in self.files:
-            raise AgentRunError(404, "missing")
-        return self.files[(thread_id, path)]
-
 
 def action_context(user="alice", runs=None):
     return SimpleNamespace(principal=SimpleNamespace(user_id=user), settings={"enabled": True}, agent_runs=runs, interaction="session")
@@ -82,5 +76,10 @@ def runs():
 
 
 @pytest.fixture
-def designs(store):
-    return Designs(store, 65536)
+def sandbox():
+    return HostSandbox()
+
+
+@pytest.fixture
+def designs(store, sandbox):
+    return Designs(store, sandbox)

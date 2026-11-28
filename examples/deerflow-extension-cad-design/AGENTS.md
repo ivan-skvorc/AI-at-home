@@ -26,6 +26,11 @@ cd ../frontend && pnpm exec playwright test cad-design
   from the first release also hold a `versions` table and a `head_version_id`
   column; they must keep opening (`tests/test_store.py`), so never alter or drop
   that schema.
+- **The run's model and mode come from `context.composerControls`**, the host's
+  chat controls; never draw a model `<select>` here
+  (`frontend/src/components/workspace/MODEL_PICKER.md`). `prompt`
+  forwards only allowlisted run-context keys and sets the `cad-design` option
+  after merging, so a page can never point a run at another design.
 - **The page reads files only through `context.threadFiles`**, under
   `/mnt/user-data/outputs/`, and parses meshes only through cad-preview's capped
   parsers: every file in a version folder is model-written, untrusted input.

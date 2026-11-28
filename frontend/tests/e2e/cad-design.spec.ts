@@ -4,6 +4,7 @@ import {
   DesignBackend,
   FOLDER,
   mockCadDesign,
+  mockModels,
   RENDER_COMMAND,
   TEXT_ANSWER,
 } from "./utils/cad-design";
@@ -107,10 +108,15 @@ test("a prompt streams the run and the preview shows the new version's bodies, v
     page.getByText("v1 · 2 bodies · rendered in 2.5 s"),
   ).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible();
+  // No model is configured here: the controls name none, so the server's
+  // default model applies, in Flash as the chat would send it.
   expect(backend.calledWith("prompt")[0]!.payload).toMatchObject({
     text: "A 60 x 40 mm plate with a peg",
-    mode: "flash",
+    context: { mode: "flash", thinking_enabled: false, is_plan_mode: false },
   });
+  expect(backend.calledWith("prompt")[0]!.payload.context).not.toHaveProperty(
+    "model_name",
+  );
   expect(backend.calledWith("prompt")[0]!.payload.viewing).toBeUndefined();
   await expect.poll(() => backend.fileRequests).toContain(`list ${FOLDER}`);
   await expect
@@ -174,6 +180,85 @@ test("a prompt streams the run and the preview shows the new version's bodies, v
   await expect(
     page.getByRole("link", { name: "Download report.json" }),
   ).toBeVisible();
+});
+
+test("the composer's model picker, mode and effort choose the run, and the prompt carries the chat's run context", async ({
+  page,
+}) => {
+  const backend = await setup(page, 1440);
+  await mockModels(page);
+  await backend.seed("Bracket");
+  await page.goto(pageURL);
+  await page.getByRole("button", { name: /Bracket/ }).click();
+
+  // The host draws the chat's controls inside the page's composer.
+  const controls = page.locator('[data-slot="plugin-composer-controls"]');
+  await expect(controls.getByText("Main agent")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Model" })).toHaveCount(0);
+
+  // The model dialog searches, sorts and lists the shared rows.
+  await controls.getByRole("button", { name: /Main agent/ }).click();
+  const search = page.getByPlaceholder("Search models...");
+  await expect(search).toBeVisible();
+  await expect(page.getByText("Group by provider")).toBeVisible();
+  await search.fill("fast");
+  await expect(page.getByRole("option", { name: /Smart Model/ })).toHaveCount(
+    0,
+  );
+  await page.getByRole("option", { name: /Fast Model/ }).click();
+  await expect(controls.getByText("Fast Model")).toBeVisible();
+
+  // A model without thinking offers no Reasoning mode; Pro and Ultra stay.
+  await controls.getByRole("button", { name: "Pro", exact: true }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByText("Ultra", { exact: true })).toBeVisible();
+  await expect(menu.getByText("Reasoning", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // Back to the thinking model, then Ultra, then an effort below its preset.
+  await controls.getByRole("button", { name: /Main agent/ }).click();
+  await page.getByPlaceholder("Search models...").fill("smart");
+  await page.getByRole("option", { name: /Smart Model/ }).click();
+  await controls.getByRole("button", { name: "Pro", exact: true }).click();
+  await page
+    .getByRole("menuitem")
+    .filter({ has: page.getByText("Ultra", { exact: true }) })
+    .click();
+  // As in the chat composer, the menu can stay open after a pick; while it is
+  // open the rest of the page is hidden from the accessibility tree.
+  await page.keyboard.press("Escape");
+  await expect(controls.getByText("Subagent")).toBeVisible();
+  await controls
+    .getByRole("button", { name: "Reasoning Effort: High" })
+    .click();
+  await page
+    .getByRole("menuitem")
+    .filter({ has: page.getByText("Medium", { exact: true }) })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(
+    controls.getByRole("button", { name: "Reasoning Effort: Medium" }),
+  ).toBeVisible();
+
+  await prompt(page).fill("A bracket with two holes");
+  await send(page);
+  await expect.poll(() => backend.calledWith("prompt").length).toBe(1);
+  expect(backend.calledWith("prompt")[0]!.payload.context).toEqual({
+    model_name: "smart-model",
+    mode: "ultra",
+    thinking_enabled: true,
+    is_plan_mode: true,
+    subagent_enabled: true,
+    reasoning_effort: "medium",
+  });
+
+  // The choice is the page's own and survives a reload.
+  await page.reload();
+  await page.getByRole("button", { name: /Bracket/ }).click();
+  await expect(
+    controls.getByRole("button", { name: "Ultra", exact: true }),
+  ).toBeVisible();
+  await expect(controls.getByText("Smart Model")).toBeVisible();
 });
 
 test("a turn that makes no version says so, and the next one shows it", async ({

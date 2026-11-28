@@ -14,11 +14,12 @@ containers at all (``HostPolicySnapshot.sandbox_container``, API 0.2.15).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from deerflow_extension_api import AgentRunError
+from deerflow_extension_api import PLUGIN_OPTIONS_CONTEXT_KEY, AgentRunError
 
 from .constants import FOLDER, ID, NAMESPACE, RUN_ID
 from .notes import VIEWING_SUFFIX
@@ -37,6 +38,133 @@ MAX_SUMMARY_CHARS = 200
 SUMMARY_KEYS = ("command", "path", "image_path", "filepaths", "description")
 MAX_VERSION = 100_000
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:/@+-]{1,128}")
+
+# -- the run context the page sends -----------------------------------------------
+#
+# The page sends what the main chat sends for the model and mode the user chose
+# (the host's composer controls, ``runContext()``). These keys are all it may set;
+# anything else is dropped. The Gateway applies its own rules to the run as to
+# any chat run: the model allowlist and ``model:use``, the reasoning contract,
+# the subagent clamps and its ``plugin_options`` bounds.
+
+RUN_MODES = frozenset({"flash", "thinking", "pro", "ultra", "democracy", "ultracode", "double_ultracode"})
+#: Effort values are each model's own vocabulary (a contract may add ``max`` or
+#: ``xhigh``), so the check is the config's token pattern for them.
+EFFORT = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+DEMOCRACY_GRADINGS = frozenset({"five_point", "boolean"})
+#: The host's clamps (``deerflow.config.subagents_config``).
+MAX_TOTAL_SUBAGENTS = 50
+MAX_CONCURRENT_SUBAGENTS = 64
+#: A Democracy panel's size, as the chat's setup allows it.
+DEMOCRACY_PARTICIPANTS = (2, 12)
+#: The Gateway's bounds for ``plugin_options`` (``sanitize_plugin_options``).
+PLUGIN_OPTIONS_MAX_NAMESPACES = 8
+PLUGIN_OPTIONS_MAX_BYTES = 4096
+
+
+def _model_name(key: str) -> Callable[[Any], str]:
+    def check(value: Any) -> str:
+        if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
+            raise ValueError(f"invalid {key}")
+        return value
+
+    return check
+
+
+def _flag(key: str) -> Callable[[Any], bool]:
+    def check(value: Any) -> bool:
+        if type(value) is not bool:
+            raise ValueError(f"{key} must be true or false")
+        return value
+
+    return check
+
+
+def _count(key: str, ceiling: int) -> Callable[[Any], int]:
+    def check(value: Any) -> int:
+        if type(value) is not int or not 1 <= value <= ceiling:
+            raise ValueError(f"{key} must be a whole number from 1 to {ceiling}")
+        return value
+
+    return check
+
+
+def _choice(key: str, choices: frozenset[str]) -> Callable[[Any], str]:
+    def check(value: Any) -> str:
+        # A list or object is not hashable: refuse it as a bad value (422), not a server error.
+        if not isinstance(value, str) or value not in choices:
+            raise ValueError(f"{key} must be one of {sorted(choices)}")
+        return value
+
+    return check
+
+
+def _effort(value: Any) -> str:
+    if not isinstance(value, str) or not EFFORT.fullmatch(value):
+        raise ValueError("invalid reasoning_effort")
+    return value
+
+
+def _participants(value: Any) -> list[str]:
+    low, high = DEMOCRACY_PARTICIPANTS
+    if not isinstance(value, list) or not low <= len(value) <= high:
+        raise ValueError(f"democracy_participants must list {low} to {high} models")
+    names = [_model_name("democracy_participants")(name) for name in value]
+    if len(set(names)) != len(names):
+        raise ValueError("democracy_participants must not repeat a model")
+    return names
+
+
+def _plugin_options(value: Any) -> dict[str, dict[str, Any]]:
+    """Other plugins' per-run options (Plus Ultracode's, for one), as plain JSON."""
+    if not isinstance(value, Mapping) or len(value) > PLUGIN_OPTIONS_MAX_NAMESPACES:
+        raise ValueError(f"plugin_options must be an object of at most {PLUGIN_OPTIONS_MAX_NAMESPACES} namespaces")
+    for namespace, options in value.items():
+        if not isinstance(namespace, str) or not 1 <= len(namespace) <= 96 or ":" in namespace or not isinstance(options, Mapping):
+            raise ValueError("plugin_options must map plugin namespaces to objects")
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError):
+        raise ValueError("plugin_options must hold JSON values only") from None
+
+
+RUN_CONTEXT_KEYS: dict[str, Callable[[Any], Any]] = {
+    "model_name": _model_name("model_name"),
+    "mode": _choice("mode", RUN_MODES),
+    "thinking_enabled": _flag("thinking_enabled"),
+    "is_plan_mode": _flag("is_plan_mode"),
+    "subagent_enabled": _flag("subagent_enabled"),
+    "reasoning_effort": _effort,
+    "subagent_model_name": _model_name("subagent_model_name"),
+    "max_total_subagents": _count("max_total_subagents", MAX_TOTAL_SUBAGENTS),
+    "max_concurrent_subagents": _count("max_concurrent_subagents", MAX_CONCURRENT_SUBAGENTS),
+    "democracy_participants": _participants,
+    "democracy_grading": _choice("democracy_grading", DEMOCRACY_GRADINGS),
+    PLUGIN_OPTIONS_CONTEXT_KEY: _plugin_options,
+}
+
+
+def design_run_context(raw: Any, design_id: str) -> dict[str, Any]:
+    """The run's context: the page's allowed keys, checked, and this design's flag.
+
+    A key the page leaves out, or sends as ``null``, is the server's default.
+    The ``cad-design`` entry of ``plugin_options`` is always this design's, set
+    after the page's entries are merged, so a page cannot point a run at another
+    design. Like the chat, a subagent model rides only on a run that delegates.
+    """
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("context must be an object")
+    context = {key: check(raw[key]) for key, check in RUN_CONTEXT_KEYS.items() if raw.get(key) is not None}
+    if context.get("subagent_enabled") is not True:
+        context.pop("subagent_model_name", None)
+    options = context.pop(PLUGIN_OPTIONS_CONTEXT_KEY, {})
+    options[NAMESPACE] = {"design_id": design_id}
+    if len(options) > PLUGIN_OPTIONS_MAX_NAMESPACES or len(json.dumps(options, ensure_ascii=False).encode()) > PLUGIN_OPTIONS_MAX_BYTES:
+        raise ValueError(f"plugin_options must stay within {PLUGIN_OPTIONS_MAX_NAMESPACES} namespaces and {PLUGIN_OPTIONS_MAX_BYTES} bytes")
+    context[PLUGIN_OPTIONS_CONTEXT_KEY] = options
+    return context
 
 
 class HostSandbox:
@@ -234,7 +362,8 @@ class Designs:
         ``viewing`` is the version the page shows and ``newest`` the newest it
         listed, both optional. When the user looks at an older version (or the
         page sends ``viewing`` alone), the message names it, so "make this one
-        taller" reaches the model with the version it means.
+        taller" reaches the model with the version it means. ``context`` is the
+        run context of the model and mode the user chose (``design_run_context``).
         """
         owner = self._owner(context)
         design_id = _id(payload, "design_id")
@@ -246,16 +375,7 @@ class Designs:
             raise ValueError("viewing must not be newer than newest")
         if viewing is not None and (newest is None or viewing < newest):
             text += VIEWING_SUFFIX.format(seq=viewing, folder=FOLDER)
-        run_context: dict[str, Any] = {"plugin_options": {NAMESPACE: {"design_id": design_id}}}
-        model_name = payload.get("model_name")
-        if model_name is not None:
-            if not isinstance(model_name, str) or not MODEL_NAME.fullmatch(model_name):
-                raise ValueError("invalid model_name")
-            run_context["model_name"] = model_name
-        mode = payload.get("mode", "flash")
-        if mode not in ("flash", "thinking"):
-            raise ValueError("mode must be flash or thinking")
-        run_context["thinking_enabled"] = mode == "thinking"
+        run_context = design_run_context(payload.get("context"), design_id)
         design = await self._call(self.store.get_design, owner, design_id)
         run = await self._runs(context).start(
             thread_id=design["thread_id"],

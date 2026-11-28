@@ -103,14 +103,17 @@ describe("the composer's pickers have one implementation", () => {
       open: "modelOpen",
       onSelect: "handleModelSelect",
     },
-  ])("$relativePath renders ComposerModelPicker", ({ relativePath, open, onSelect }) => {
-    const contents = source(relativePath);
-    expect(contents).toContain("<ComposerModelPicker");
-    expect(contents).toMatch(new RegExp(`open=\\{${open}\\}`));
-    expect(contents).toMatch(new RegExp(`onSelect=\\{${onSelect}\\}`));
-    expect(contents).toContain("<ComposerModeMenu");
-    expect(contents).toContain("<ComposerReasoningEffortMenu");
-    expect(contents).toContain("<ComposerSubagentModelPicker");
-    expect(contents).not.toMatch(/<ModelSelector\s/);
-  });
+  ])(
+    "$relativePath renders ComposerModelPicker",
+    ({ relativePath, open, onSelect }) => {
+      const contents = source(relativePath);
+      expect(contents).toContain("<ComposerModelPicker");
+      expect(contents).toMatch(new RegExp(`open=\\{${open}\\}`));
+      expect(contents).toMatch(new RegExp(`onSelect=\\{${onSelect}\\}`));
+      expect(contents).toContain("<ComposerModeMenu");
+      expect(contents).toContain("<ComposerReasoningEffortMenu");
+      expect(contents).toContain("<ComposerSubagentModelPicker");
+      expect(contents).not.toMatch(/<ModelSelector\s/);
+    },
+  );
 });

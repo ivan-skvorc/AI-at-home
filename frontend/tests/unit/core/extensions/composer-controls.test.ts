@@ -93,12 +93,10 @@ describe("the selection, resolved as the composer resolves it", () => {
 
   it("moves both Ultracodes to Ultra only once the extensions loaded without Script workflows", () => {
     const stored = context({ model_name: "smart", mode: "double_ultracode" });
-    expect(resolveComposerSelection(stored, MODELS, LOADED).mode).toBe(
-      "ultra",
+    expect(resolveComposerSelection(stored, MODELS, LOADED).mode).toBe("ultra");
+    expect(resolveComposerSelection(stored, MODELS, WITH_WORKFLOWS).mode).toBe(
+      "double_ultracode",
     );
-    expect(
-      resolveComposerSelection(stored, MODELS, WITH_WORKFLOWS).mode,
-    ).toBe("double_ultracode");
     expect(
       resolveComposerSelection(stored, MODELS, {
         loaded: false,
@@ -179,9 +177,7 @@ describe("the run context", () => {
     first.mode = "flash";
     const second = pluginRunContext(stored, MODELS, WITH_WORKFLOWS);
     expect(second.mode).toBe("ultracode");
-    expect(second.plugin_options![ULTRACODE_NAMESPACE]!.mode).toBe(
-      "ultracode",
-    );
+    expect(second.plugin_options![ULTRACODE_NAMESPACE]!.mode).toBe("ultracode");
   });
 
   it("names no model while none is known, so the server default applies", () => {

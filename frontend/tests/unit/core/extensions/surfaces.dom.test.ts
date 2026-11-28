@@ -315,9 +315,9 @@ test("composer controls end with the page and contain the page's callback", () =
   expect(() => wrapped({ mode: "flash" })).not.toThrow();
   expect(onChange).toHaveBeenCalledTimes(1);
   expect(forwarded[1]).toBeUndefined();
-  expect(() =>
-    controls.mount({} as HTMLElement, { storageKey: "c" }),
-  ).toThrow(TypeError);
+  expect(() => controls.mount({} as HTMLElement, { storageKey: "c" })).toThrow(
+    TypeError,
+  );
   cleanup();
   expect(disposed).toEqual(["b", "a"]);
   kept.dispose();

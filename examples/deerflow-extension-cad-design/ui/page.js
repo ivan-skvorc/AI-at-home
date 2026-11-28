@@ -26,8 +26,6 @@ import { STYLE } from "./style.js";
 import { strings } from "./text.js";
 import { VIEWS, createViewer } from "./viewer.js";
 
-const MODEL_RETRY_MS = 1000;
-const MODEL_RETRIES = 30;
 const LEFT_DEFAULT = 38;
 const POLL_MS = 2000;
 /** Tool results arrive in bursts; one listing follows the burst. */
@@ -220,24 +218,23 @@ export function mountPage(root, context) {
   promptBox.placeholder = text.promptPlaceholder;
   promptBox.setAttribute("aria-label", text.promptPlaceholder);
   promptBox.maxLength = 8000;
-  const modelSelect = element("select");
-  modelSelect.setAttribute("aria-label", text.model);
-  const thinkingLabel = element("label");
-  const thinking = element("input");
-  thinking.type = "checkbox";
-  thinking.checked = storage.get("thinking") === "1";
-  thinking.addEventListener("change", () =>
-    storage.set("thinking", thinking.checked ? "1" : "0"),
-  );
-  thinkingLabel.append(thinking, ` ${text.thinking}`);
+  // The chat composer's model picker, mode and reasoning effort, drawn by the
+  // host; an older host has none, and the server's default model and mode apply.
+  const runControls = element("div", "run-controls");
+  let controls = null;
+  try {
+    controls = context.composerControls?.mount(runControls) ?? null;
+  } catch {
+    controls = null;
+  }
+  runControls.hidden = !controls;
   const stopButton = button(text.stop, () => stopRun());
   stopButton.hidden = true;
   const sendButton = element("button", "primary", text.send);
   sendButton.type = "submit";
   const composerRow = element("div", "row");
   composerRow.append(
-    modelSelect,
-    thinkingLabel,
+    runControls,
     element("span", "grow"),
     stopButton,
     sendButton,
@@ -470,48 +467,22 @@ export function mountPage(root, context) {
   });
   widthObserver.observe(app);
 
-  // -- models -----------------------------------------------------------------------
+  // -- run options ------------------------------------------------------------------
 
-  function renderModels() {
-    const models = context.models;
-    // The user's last pick on this page, else the host's current model.
-    const chosen = storage.get("model") ?? models?.defaultName ?? "";
-    modelSelect.replaceChildren(new Option(text.defaultModel, ""));
-    for (const model of models?.list ?? []) {
-      if (typeof model?.name !== "string") continue;
-      modelSelect.append(
-        new Option(model.display_name || model.name, model.name),
-      );
+  /** What the main chat would send for the chosen model and mode, as the run's context. */
+  const runOptions = () => {
+    let runContext;
+    try {
+      runContext = controls?.runContext();
+    } catch {
+      return {};
     }
-    const names = new Set([...modelSelect.options].map((o) => o.value));
-    modelSelect.value = names.has(chosen)
-      ? chosen
-      : names.has(models?.defaultName ?? "")
-        ? models.defaultName
-        : "";
-    if (!modelSelect.value) modelSelect.value = "";
-    modelSelect.hidden = modelSelect.options.length <= 1;
-    // A hidden select cannot take focus, so a list that had not loaded yet is
-    // looked up again here rather than on focus.
-    cancel(modelTimer);
-    if (modelSelect.hidden && S.design && modelTries < MODEL_RETRIES) {
-      modelTries += 1;
-      modelTimer = later(renderModels, MODEL_RETRY_MS);
-    }
-  }
-  let modelTimer = 0;
-  let modelTries = 0;
-  promptBox.addEventListener("focus", () => {
-    if (modelSelect.hidden) renderModels();
-  });
-  modelSelect.addEventListener("change", () =>
-    storage.set("model", modelSelect.value),
-  );
-  modelSelect.addEventListener("focus", renderModels);
-  const runOptions = () => ({
-    ...(modelSelect.value ? { model_name: modelSelect.value } : {}),
-    mode: thinking.checked ? "thinking" : "flash",
-  });
+    return runContext &&
+      typeof runContext === "object" &&
+      !Array.isArray(runContext)
+      ? { context: runContext }
+      : {};
+  };
 
   // -- list view ---------------------------------------------------------------------
 
@@ -668,8 +639,6 @@ export function mountPage(root, context) {
     title.textContent = S.design.title || text.untitled;
     viewer?.reset();
     setOverlay(null);
-    modelTries = 0;
-    renderModels();
     renderBanner();
     renderPicker();
     renderViewing();
@@ -1528,6 +1497,8 @@ export function mountPage(root, context) {
     widthObserver.disconnect();
     viewer?.dispose();
     viewer = null;
+    controls?.dispose();
+    controls = null;
     models.clear();
     reads.clear();
     root.replaceChildren();

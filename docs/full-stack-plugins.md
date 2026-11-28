@@ -278,6 +278,31 @@ carries names only (no prices or credentials), reads live without remounting the
 page, and is empty while the host is still loading the list. A plugin that starts a
 run passes the chosen name as `model_name`; the Gateway still enforces model access.
 
+The optional `composerControls` helper puts the chat composer's run controls on a
+page, so a plugin never draws its own model list. `mount(element, { storageKey?,
+onChange? })` renders, inside the plugin's element, the same React controls the
+main chat uses: the model picker (search, sorting, grouping, prices and local model
+details, sharing the user's picker preference), the mode menu with every mode the
+composer offers for the selected model and the installed extensions, and the
+reasoning-effort menu, with the same hover guides. Democracy is not offered: the
+composer's menu does not offer it either, because a panel needs the roster and the
+cost preview of its own setup dialog. The controls live in a shadow root of their own
+holding the host's stylesheets, so page and host styles do not mix; menus and dialogs
+open over the page. It returns `{ runContext(), dispose() }`. `runContext()` returns
+a fresh object with what the chat would send for the current selection: `model_name`
+(absent while no model is known, so the server default applies), `mode`,
+`thinking_enabled`, `is_plan_mode`, `subagent_enabled`, `reasoning_effort`,
+`subagent_model_name` on a run that delegates, and for Plus and Double Plus Ultracode
+the Script workflows extension's `plugin_options` entry with the user's Settings
+limits. Pass it as the run's context from a backend action, after checking its keys:
+it is browser input like any payload. The selection persists per account, plugin page
+and `storageKey` (1-64 of `A-Za-z0-9._-`, default `default`) in this browser, never as
+an account preference; a model that is no longer configured falls back as it does in
+the chat. `onChange(runContext)` runs each time the selection changes; an exception
+it throws stays in the page. `dispose()` unmounts the controls and removes their
+element, and the page's unmount disposes any still mounted. Older hosts omit
+`composerControls`: show no model choice and let the server default apply.
+
 A thread whose metadata has `deerflow_listed: false` is left out of the chat lists
 in the sidebar and the chats page, like Side Chat threads, because an extension page
 presents it itself. It remains reachable by URL, keeps its search corpus, and
@@ -633,6 +658,16 @@ Plugin page `openConversation(threadId)` resolves authenticated thread metadata
 with `pathOfThread`; do not let plugins hardcode default-agent routes. The page's
 abort signal fences late navigation after unmount/account changes. Synchronous
 conversation-action callbacks reject Promise returns while consuming rejections.
+
+`composerControls` renders `components/workspace/composer-run-controls.tsx`, the
+components `InputBox` renders, through a portal from the page's own React tree
+(`plugin-composer-controls.tsx`), so the controls keep the workspace providers and
+unmount with the page. A plugin never receives a host component or React. The
+selection is a per-thread settings scope `plugin:<account>:<namespace>/<page>/<key>`,
+written like a conversation's own choice and repaired like it; `core/extensions/
+composer-controls.ts` derives `runContext()` with `deriveModeContext`, the derivation
+the chat's `buildRunContext` uses. Tests: `composer-controls.test.ts`,
+`surfaces.dom.test.ts`, `plugin-composer-controls.dom.test.tsx`.
 
 ## Validation scope
 

@@ -124,6 +124,37 @@ let counter = 0;
 const hexId = () => (++counter).toString(16).padStart(32, "0");
 const now = () => new Date().toISOString();
 
+/** Two models for the composer controls: one with thinking and effort, one without. */
+export const MODELS = [
+  {
+    id: "smart-model",
+    name: "smart-model",
+    model: "smart-model",
+    display_name: "Smart Model",
+    supports_thinking: true,
+    supports_reasoning_effort: true,
+  },
+  {
+    id: "fast-model",
+    name: "fast-model",
+    model: "fast-model",
+    display_name: "Fast Model",
+    supports_thinking: false,
+    supports_reasoning_effort: false,
+  },
+];
+
+/** Serve MODELS from `GET /api/models`; registered after mockLangGraphAPI, so it wins. */
+export async function mockModels(page: Page) {
+  await page.route("**/api/models", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: { models: MODELS, token_usage: { enabled: false } },
+        })
+      : route.fallback(),
+  );
+}
+
 /**
  * The package's backend actions over an in-memory store, and each design
  * thread's output tree as the host's file routes serve it. A prompt plays the

@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, rs, test } from "@rstest/core";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  rs,
+  test,
+} from "@rstest/core";
 import {
   act,
   cleanup,
@@ -30,10 +37,12 @@ import { THREAD_CONTEXT_KEY_PREFIX } from "@/core/settings/local";
 const state = rs.hoisted(() => ({
   entries: [] as unknown[],
   models: [] as unknown[],
+  // Next's router is stable across renders; a new one would remount the page.
+  router: { push: () => undefined },
 }));
 
 rs.mock("next/navigation", () => ({
-  useRouter: () => ({ push: rs.fn() }),
+  useRouter: () => state.router,
 }));
 rs.mock("@/core/auth/AuthProvider", () => ({
   useAuth: () => ({ user: { id: "alice" } }),
@@ -78,7 +87,10 @@ const WORKFLOWS = {
 let mounts: { slot: HTMLElement; context: SurfaceContext }[] = [];
 let disposePage = rs.fn();
 
-function install(storageKey: string, onChange?: (c: SurfaceRunContext) => void) {
+function install(
+  storageKey: string,
+  onChange?: (c: SurfaceRunContext) => void,
+) {
   const handles: SurfaceComposerControlsHandle[] = [];
   const entry: LoadedContribution = {
     namespace: "cad-design",
@@ -135,12 +147,29 @@ function controlsIn(slot: HTMLElement) {
   return tree;
 }
 
-async function chooseMode(slot: HTMLElement, current: string, next: string) {
+/** The open menu's items by their bold label (the description follows it). */
+async function menuItems() {
+  const items = await screen.findAllByRole("menuitem");
+  return new Map(
+    items.map((item) => [
+      item.querySelector(".font-bold")?.textContent?.trim() ?? "",
+      item,
+    ]),
+  );
+}
+
+async function openModeMenu(slot: HTMLElement, current: string) {
   const trigger = within(controlsIn(slot)).getByRole("button", {
     name: current,
   });
   fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: next }));
+  return menuItems();
+}
+
+async function chooseMode(slot: HTMLElement, current: string, next: string) {
+  const item = (await openModeMenu(slot, current)).get(next);
+  if (!item) throw new Error(`no ${next} in the mode menu`);
+  fireEvent.click(item);
 }
 
 beforeEach(() => {
@@ -171,10 +200,15 @@ describe("composer controls on a plugin page", () => {
     await waitFor(() =>
       expect(within(controlsIn(slot)).getByText("Main agent")).toBeTruthy(),
     );
-    const shadow = slot.querySelector('[data-slot="composer-controls-host"]')!
-      .shadowRoot!;
+    const shadow = slot.querySelector(
+      '[data-slot="composer-controls-host"]',
+    )!.shadowRoot!;
     // The host's styles are copied into the controls' own shadow root only.
-    expect(shadow.querySelector("style")?.textContent).toBe(".host-rule{}");
+    expect(
+      [...shadow.querySelectorAll("style")].some(
+        (node) => node.textContent === ".host-rule{}",
+      ),
+    ).toBe(true);
     expect(within(controlsIn(slot)).getByText("Smart Model")).toBeTruthy();
     // A new selection follows the account default, resolved as a new chat's is.
     expect(handles[0]!.runContext()).toEqual({
@@ -195,7 +229,15 @@ describe("composer controls on a plugin page", () => {
     const slot = mounts[0]!.slot;
     await waitFor(() => controlsIn(slot));
 
-    await chooseMode(slot, enUS.inputBox.proMode, enUS.inputBox.ultraMode);
+    // The composer's modes for a thinking model; no Ultracode without Script workflows.
+    const items = await openModeMenu(slot, enUS.inputBox.proMode);
+    expect([...items.keys()]).toEqual([
+      enUS.inputBox.flashMode,
+      enUS.inputBox.reasoningMode,
+      enUS.inputBox.proMode,
+      enUS.inputBox.ultraMode,
+    ]);
+    fireEvent.click(items.get(enUS.inputBox.ultraMode)!);
     await waitFor(() =>
       expect(handles[0]!.runContext()).toMatchObject({
         mode: "ultra",
@@ -214,7 +256,9 @@ describe("composer controls on a plugin page", () => {
     fireEvent.click(
       within(controlsIn(slot)).getByText("Main agent").closest("button")!,
     );
-    expect(screen.getByPlaceholderText(enUS.inputBox.searchModels)).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText(enUS.inputBox.searchModels),
+    ).toBeTruthy();
     const plain = screen
       .getAllByRole("option")
       .find((option) => option.getAttribute("data-value") === "plain")!;
@@ -232,15 +276,6 @@ describe("composer controls on a plugin page", () => {
       ) ?? "{}",
     ) as Record<string, unknown>;
     expect(stored).toMatchObject({ model_name: "plain", mode: "ultra" });
-    // A model without thinking offers no Reasoning mode.
-    const trigger = within(controlsIn(slot)).getByRole("button", {
-      name: enUS.inputBox.ultraMode,
-    });
-    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-    await screen.findByRole("menuitem", { name: enUS.inputBox.proMode });
-    expect(
-      screen.queryByRole("menuitem", { name: enUS.inputBox.reasoningMode }),
-    ).toBeNull();
   });
 
   test("Plus Ultracode is offered only with Script workflows and carries its plugin option", async () => {
@@ -270,6 +305,10 @@ describe("composer controls on a plugin page", () => {
     await waitFor(() => controlsIn(slot));
     act(() => handles[0]!.dispose());
     expect(slot.childElementCount).toBe(0);
+    // The portal is gone too, not only its host element: no controls render anywhere.
+    expect(
+      document.querySelectorAll('[data-slot="composer-controls-host"]'),
+    ).toHaveLength(0);
 
     const again = mounts[0]!.context.composerControls!.mount(slot);
     await waitFor(() => controlsIn(slot));

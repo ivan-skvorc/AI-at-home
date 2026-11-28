@@ -48,8 +48,12 @@ running container whatever its image.
 ## Using it
 
 1. **Designs → New design.** Describe the part with its sizes in millimetres,
-   what moves and what it must fit. The model picker and Thinking apply to this
-   design's turns. For a mechanism the assistant may first offer two or three
+   what moves and what it must fit. Under the prompt are the chat's own
+   controls: the model picker (search, sorting, prices), the mode (Flash,
+   Reasoning, Pro, Ultra, and Plus and Double Plus Ultracode when Script
+   workflows is on) and the reasoning effort. They apply to this design's turns
+   and are remembered for the Designs page in this browser, apart from any
+   chat's choice. For a mechanism the assistant may first offer two or three
    ways to build it and ask you to pick.
 2. **Watch it work.** The conversation follows the run live, with each tool call
    as one line. Every time the assistant renders, a new version appears on the

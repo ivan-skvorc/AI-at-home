@@ -54,7 +54,7 @@ a{color:var(--primary)}
 .composer .viewing{font-size:12px}
 .composer textarea{width:100%;min-height:64px;max-height:40vh;resize:vertical}
 .composer .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.composer select{max-width:14rem}
+.composer .run-controls{display:flex;align-items:center;min-width:0;flex:0 1 auto}
 .divider{cursor:col-resize;background:transparent;border:0;border-radius:0;padding:0;min-height:0}
 .divider:hover,.divider:focus-visible{background:var(--border)}
 .work{min-width:0;min-height:0;display:flex;flex-direction:column}

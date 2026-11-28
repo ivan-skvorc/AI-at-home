@@ -134,19 +134,111 @@ async def test_purge_deletes_the_designs_thread_too(designs, runs):
     assert foreign.value.status_code == 404
 
 
-async def test_prompt_starts_a_streaming_design_run(designs, runs):
+#: What the host's composer controls send for Ultra on a thinking model (``runContext()``).
+ULTRA = {"model_name": "qwen3:8b", "mode": "ultra", "thinking_enabled": True, "is_plan_mode": True, "subagent_enabled": True, "reasoning_effort": "high", "subagent_model_name": "gpt-4o-mini"}
+
+
+async def test_prompt_starts_a_streaming_design_run_with_the_chosen_run_context(designs, runs):
     design = await new_design(designs, runs)
-    answer = await designs.prompt({"design_id": design["id"], "text": "make it taller", "model_name": "qwen3:8b", "mode": "thinking"}, action_context("alice", runs))
+    answer = await designs.prompt({"design_id": design["id"], "text": "make it taller", "context": ULTRA}, action_context("alice", runs))
     assert answer == {"run_id": "run-1", "thread_id": "thread-1"}
     started = runs.started[0]
     assert started["stream_mode"] == ["values", "messages-tuple"]
     assert started["input"] == {"messages": [{"role": "user", "content": "make it taller"}]}
-    assert started["context"] == {"plugin_options": {"cad-design": {"design_id": design["id"]}}, "model_name": "qwen3:8b", "thinking_enabled": True}
+    assert started["context"] == {**ULTRA, "plugin_options": {"cad-design": {"design_id": design["id"]}}}
     assert designs.store.get_design("alice", design["id"])["run_id"] == "run-1"
-    for bad in ({"text": ""}, {"text": "x" * 9000}, {"text": "hi", "mode": "ultracode"}, {"text": "hi", "model_name": "a b"}):
+
+
+async def test_without_a_run_context_the_server_defaults_apply(designs, runs):
+    design = await new_design(designs, runs)
+    for payload in ({}, {"context": None}, {"context": {}}, {"context": {"model_name": None, "mode": None}}):
+        await designs.prompt({"design_id": design["id"], "text": "a plate", **payload}, action_context("alice", runs))
+        assert runs.started[-1]["context"] == {"plugin_options": {"cad-design": {"design_id": design["id"]}}}
+
+
+async def test_the_run_context_keeps_only_what_the_chat_sends(designs, runs):
+    design = await new_design(designs, runs)
+    context = {
+        **ULTRA,
+        # Host-owned or unknown keys never reach the run.
+        "agent_name": "other-agent",
+        "is_bootstrap": True,
+        "thread_id": "thread-9",
+        "memory_enabled": True,
+        "github_token": "secret",
+        "democracy_participants": ["a", "b"],
+        "democracy_grading": "boolean",
+        "max_total_subagents": 6,
+        "max_concurrent_subagents": 2,
+    }
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": context}, action_context("alice", runs))
+    sent = runs.started[-1]["context"]
+    assert set(sent) == set(ULTRA) | {"democracy_participants", "democracy_grading", "max_total_subagents", "max_concurrent_subagents", "plugin_options"}
+    # Like the chat, a subagent model rides only on a run that delegates.
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": {**ULTRA, "mode": "pro", "subagent_enabled": False}}, action_context("alice", runs))
+    assert "subagent_model_name" not in runs.started[-1]["context"]
+
+
+async def test_a_forged_design_flag_is_replaced_and_other_plugins_options_ride_along(designs, runs):
+    design = await new_design(designs, runs)
+    workflows = {"mode": "ultracode", "max_agents": 10, "max_parallel": 4, "max_minutes": 30, "model": "qwen3:8b"}
+    forged = {"cad-design": {"design_id": "f" * 32, "extra": True}, "community.workflows": workflows}
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": {**ULTRA, "mode": "ultracode", "plugin_options": forged}}, action_context("alice", runs))
+    options = runs.started[-1]["context"]["plugin_options"]
+    assert options == {"cad-design": {"design_id": design["id"]}, "community.workflows": workflows}
+    assert forged["cad-design"]["design_id"] == "f" * 32, "the page's own object is not mutated"
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "flash",
+        ["mode", "flash"],
+        {"mode": "turbo"},
+        {"mode": True},
+        {"model_name": "a b"},
+        {"model_name": 7},
+        {"thinking_enabled": "yes"},
+        {"is_plan_mode": 1},
+        {"subagent_enabled": 0},
+        {"reasoning_effort": "very high"},
+        {"reasoning_effort": "x" * 33},
+        {"subagent_model_name": "two words"},
+        {"max_total_subagents": 0},
+        {"max_total_subagents": 51},
+        {"max_total_subagents": True},
+        {"max_concurrent_subagents": 65},
+        {"max_concurrent_subagents": 2.5},
+        {"democracy_participants": ["a"]},
+        {"democracy_participants": ["a", "a"]},
+        {"democracy_participants": [f"m{i}" for i in range(13)]},
+        {"democracy_participants": "a,b"},
+        {"democracy_grading": "ten_point"},
+        {"plugin_options": []},
+        {"plugin_options": {"x": 1}},
+        {"plugin_options": {"a:b": {}}},
+        {"plugin_options": {"": {}}},
+        {"plugin_options": {"x": {"v": float("nan")}}},
+        {"plugin_options": {"x": {"v": object()}}},
+        {"plugin_options": {f"p{i}": {} for i in range(9)}},
+        # The page's eight plus this design's flag is one namespace too many.
+        {"plugin_options": {f"p{i}": {} for i in range(8)}},
+        {"plugin_options": {"x": {"v": "y" * 4100}}},
+    ],
+)
+async def test_an_invalid_run_context_is_refused(designs, runs, context):
+    design = await new_design(designs, runs)
+    with pytest.raises(ValueError):
+        await designs.prompt({"design_id": design["id"], "text": "hi", "context": context}, action_context("alice", runs))
+    assert runs.started == []
+
+
+async def test_the_prompt_text_is_bounded(designs, runs):
+    design = await new_design(designs, runs)
+    for bad in ({"text": ""}, {"text": "  "}, {"text": "x" * 9000}, {}):
         with pytest.raises(ValueError):
             await designs.prompt({"design_id": design["id"], **bad}, action_context("alice", runs))
-    assert len(runs.started) == 1
+    assert runs.started == []
 
 
 async def test_an_older_viewed_version_is_named_in_the_message(designs, runs):
@@ -233,3 +325,14 @@ def test_summaries_ignore_what_is_not_an_argument_map():
     assert summarize_args(None) == summarize_args(["ls"]) == summarize_args({}) == ""
     assert summarize_args({"command": "", "description": "Look around"}) == "Look around"
     assert summarize_args({"command": "echo " + "x" * 500}) == ("echo " + "x" * 500)[:MAX_SUMMARY_CHARS] + "..."
+
+
+def test_a_non_string_mode_is_a_bad_value_not_a_server_error():
+    from deerflow_extension_cad_design.actions import design_run_context
+
+    for bad in ([], {}, ["flash"], 3):
+        try:
+            design_run_context({"mode": bad}, "a" * 32)
+        except ValueError:
+            continue
+        raise AssertionError(f"mode={bad!r} was accepted")

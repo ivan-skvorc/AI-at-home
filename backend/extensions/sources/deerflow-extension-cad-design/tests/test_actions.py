@@ -1,19 +1,16 @@
+from types import SimpleNamespace
+
 import pytest
 from conftest import action_context
-from deerflow_extension_api import AgentRunError
+from deerflow_extension_api import AgentRunError, ExtensionRuntimeDeps, HostPolicySnapshot
 
-from deerflow_extension_cad_design.actions import ACTIONS, Designs, simplify_messages
-from deerflow_extension_cad_design.constants import CAD_BUILD_TOOL, SCAD_DRAFT_TOOL
+from deerflow_extension_cad_design.actions import ACTIONS, MAX_SUMMARY_CHARS, MAX_TOOL_CHARS, Designs, HostSandbox, simplify_messages, summarize_args
 
-CUBE = "size = 10; // [1:1:50]\ncube(size);\n"
+FOLDER = "/mnt/user-data/outputs/design"
 
 
 async def new_design(designs, runs, user="alice", title="Bracket"):
     return (await designs.create_design({"title": title}, action_context(user, runs)))["design"]
-
-
-async def model_version(designs, design, scad=CUBE, user="alice"):
-    return designs.store.add_version(user, design["id"], parent_id=design.get("head_version_id"), source="model", scad=scad, params={"size": 10})
 
 
 def test_every_declared_action_exists():
@@ -21,13 +18,18 @@ def test_every_declared_action_exists():
         assert callable(getattr(Designs, name)), name
 
 
+def test_the_retired_actions_are_gone():
+    # Versions are the run's folders now; the Gateway stores, renders and repairs nothing.
+    assert not {"get_version", "save_version", "report_render", "set_head", "repair", "finalize"} & set(ACTIONS)
+
+
 async def test_create_makes_a_hidden_owned_thread(designs, runs):
     design = await new_design(designs, runs)
     assert runs.threads == [{"thread_id": "thread-1", "metadata": {"cad_design_id": design["id"], "deerflow_listed": False}}]
     assert design["thread_id"] == "thread-1" and design["title"] == "Bracket"
     listed = await designs.list_designs({}, action_context("alice", runs))
-    assert [d["id"] for d in listed["designs"]] == [design["id"]]
-    assert listed["designs"][0]["thumbnail"] is None and listed["designs"][0]["versions"] == 0
+    assert listed["designs"] == [{"id": design["id"], "title": "Bracket", "updated_at": design["updated_at"], "deleted_at": None}]
+    assert listed["container"] is False
     assert (await designs.list_designs({}, action_context("bob", runs)))["designs"] == []
 
 
@@ -42,6 +44,27 @@ async def test_a_refused_create_deletes_its_thread(designs, runs, monkeypatch):
     assert runs.deleted == ["thread-2"]
 
 
+async def test_get_design_names_the_fixed_folder_and_the_host_mode(designs, runs, sandbox):
+    design = await new_design(designs, runs)
+    context = action_context("alice", runs)
+    assert await designs.get_design({"design_id": design["id"]}, context) == {"design": design, "folder": FOLDER, "container": False}
+    # The Gateway hands every service the projected host policy when it starts.
+    await sandbox.start(ExtensionRuntimeDeps(policy=HostPolicySnapshot(sandbox_container=True)))
+    assert (await designs.get_design({"design_id": design["id"]}, context))["container"] is True
+    assert (await designs.list_designs({}, context))["container"] is True
+    await sandbox.start(ExtensionRuntimeDeps(policy=HostPolicySnapshot()))
+    assert (await designs.get_design({"design_id": design["id"]}, context))["container"] is False
+
+
+async def test_a_host_older_than_the_flag_reads_as_no_container():
+    sandbox = HostSandbox()
+    await sandbox.start(SimpleNamespace(policy=SimpleNamespace(token_budget_enabled=False)))
+    assert sandbox.container is False
+    await sandbox.start(SimpleNamespace(policy=SimpleNamespace(sandbox_container="yes")))
+    assert sandbox.container is False
+    await sandbox.stop()
+
+
 async def test_other_users_get_404(designs, runs):
     design = await new_design(designs, runs)
     for name, payload in (
@@ -50,10 +73,13 @@ async def test_other_users_get_404(designs, runs):
         ("delete_design", {"design_id": design["id"]}),
         ("prompt", {"design_id": design["id"], "text": "hi"}),
         ("messages", {"design_id": design["id"]}),
+        ("run_status", {"design_id": design["id"], "run_id": "run-1"}),
+        ("cancel", {"design_id": design["id"], "run_id": "run-1"}),
     ):
         with pytest.raises(AgentRunError) as caught:
             await getattr(designs, name)(payload, action_context("bob", runs))
         assert caught.value.status_code == 404, name
+    assert runs.started == [] and runs.cancelled == []
 
 
 async def test_ids_are_validated(designs, runs):
@@ -86,7 +112,7 @@ async def test_rename_delete_restore_purge(designs, runs):
 
 
 async def test_purge_deletes_the_designs_thread_too(designs, runs):
-    """The thread holds every prompt, draft and build output and is unlisted, so it goes with the design."""
+    """The thread holds every prompt and version folder and is unlisted, so it goes with the design."""
     design = await new_design(designs, runs)
     context = action_context("alice", runs)
     await designs.delete_design({"design_id": design["id"]}, context)
@@ -95,7 +121,7 @@ async def test_purge_deletes_the_designs_thread_too(designs, runs):
         await designs.purge_design({"design_id": design["id"]}, context)
     assert busy.value.status_code == 409
     assert [d["id"] for d in (await designs.list_designs({"trash": True}, context))["designs"]] == [design["id"]]
-    runs.delete_refuse = (404, "Thread not found")  # already gone: the rows still go
+    runs.delete_refuse = (404, "Thread not found")  # already gone: the row still goes
     assert await designs.purge_design({"design_id": design["id"]}, context) == {"purged": True}
     assert (await designs.list_designs({"trash": True}, context))["designs"] == []
     second = await new_design(designs, runs, title="Two")
@@ -108,166 +134,205 @@ async def test_purge_deletes_the_designs_thread_too(designs, runs):
     assert foreign.value.status_code == 404
 
 
-async def test_save_version_and_report_render(designs, runs):
+#: What the host's composer controls send for Ultra on a thinking model (``runContext()``).
+ULTRA = {"model_name": "qwen3:8b", "mode": "ultra", "thinking_enabled": True, "is_plan_mode": True, "subagent_enabled": True, "reasoning_effort": "high", "subagent_model_name": "gpt-4o-mini"}
+
+
+async def test_prompt_starts_a_streaming_design_run_with_the_chosen_run_context(designs, runs):
     design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    base = await model_version(designs, design)
-    saved = (await designs.save_version({"design_id": design["id"], "parent_id": base["id"], "scad": "cube(3);", "params": {"size": 3}, "source": "slider"}, context))["version"]
-    assert (saved["seq"], saved["source"], saved["parent_id"]) == (2, "slider", base["id"])
-    for bad in ({"source": "model"}, {"params": {"bad name": 1}}, {"params": {"x": "1"}}, {"scad": "x" * 70000}):
-        with pytest.raises(ValueError):
-            await designs.save_version({"design_id": design["id"], "parent_id": base["id"], "scad": "cube(3);", "params": {}, "source": "hand", **bad}, context)
-    render = {"ok": True, "bbox_mm": [10, 10, 10], "volume_mm3": 1000, "manifold": True, "triangles": 12, "ms": 40}
-    stored = (await designs.report_render({"design_id": design["id"], "version_id": saved["id"], "render": render}, context))["version"]
-    assert stored["render"] == {"ok": True, "partial": False, "bbox_mm": [10.0, 10.0, 10.0], "volume_mm3": 1000.0, "manifold": True, "triangles": 12, "ms": 40}
-    for bad in ({"ok": True, "partial": True}, {"ok": True, "html": "<b>"}, {"ok": "yes"}, {"ok": True, "bbox_mm": [1, 2]}, {"ok": False, "error_lines": ["1"]}):
-        with pytest.raises(ValueError):
-            await designs.report_render({"design_id": design["id"], "version_id": saved["id"], "render": bad}, context)
-
-
-async def test_save_version_is_refused_while_a_run_is_active(designs, runs):
-    design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    await designs.prompt({"design_id": design["id"], "text": "a cube"}, context)
-    runs.status = "running"
-    with pytest.raises(AgentRunError) as caught:
-        await designs.save_version({"design_id": design["id"], "parent_id": None, "scad": "cube(1);", "params": {}, "source": "hand"}, context)
-    assert caught.value.status_code == 409
-    runs.status = "success"
-    await designs.save_version({"design_id": design["id"], "parent_id": None, "scad": "cube(1);", "params": {}, "source": "hand"}, context)
-
-
-async def test_prompt_starts_a_streaming_design_run(designs, runs):
-    design = await new_design(designs, runs)
-    version = await model_version(designs, design)
-    answer = await designs.prompt({"design_id": design["id"], "text": "make it taller", "model_name": "qwen3:8b", "mode": "thinking"}, action_context("alice", runs))
+    answer = await designs.prompt({"design_id": design["id"], "text": "make it taller", "context": ULTRA}, action_context("alice", runs))
     assert answer == {"run_id": "run-1", "thread_id": "thread-1"}
     started = runs.started[0]
     assert started["stream_mode"] == ["values", "messages-tuple"]
     assert started["input"] == {"messages": [{"role": "user", "content": "make it taller"}]}
-    assert started["context"] == {
-        "plugin_options": {"cad-design": {"design_id": design["id"], "head": version["id"], "phase": "draft"}},
-        "model_name": "qwen3:8b",
-        "thinking_enabled": True,
-    }
+    assert started["context"] == {**ULTRA, "plugin_options": {"cad-design": {"design_id": design["id"]}}}
     assert designs.store.get_design("alice", design["id"])["run_id"] == "run-1"
-    for bad in ({"text": ""}, {"text": "x" * 9000}, {"text": "hi", "mode": "ultracode"}, {"text": "hi", "model_name": "a b"}):
+
+
+async def test_without_a_run_context_the_server_defaults_apply(designs, runs):
+    design = await new_design(designs, runs)
+    for payload in ({}, {"context": None}, {"context": {}}, {"context": {"model_name": None, "mode": None}}):
+        await designs.prompt({"design_id": design["id"], "text": "a plate", **payload}, action_context("alice", runs))
+        assert runs.started[-1]["context"] == {"plugin_options": {"cad-design": {"design_id": design["id"]}}}
+
+
+async def test_the_run_context_keeps_only_what_the_chat_sends(designs, runs):
+    design = await new_design(designs, runs)
+    context = {
+        **ULTRA,
+        # Host-owned or unknown keys never reach the run.
+        "agent_name": "other-agent",
+        "is_bootstrap": True,
+        "thread_id": "thread-9",
+        "memory_enabled": True,
+        "github_token": "secret",
+        "democracy_participants": ["a", "b"],
+        "democracy_grading": "boolean",
+        "max_total_subagents": 6,
+        "max_concurrent_subagents": 2,
+    }
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": context}, action_context("alice", runs))
+    sent = runs.started[-1]["context"]
+    assert set(sent) == set(ULTRA) | {"democracy_participants", "democracy_grading", "max_total_subagents", "max_concurrent_subagents", "plugin_options"}
+    # Like the chat, a subagent model rides only on a run that delegates.
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": {**ULTRA, "mode": "pro", "subagent_enabled": False}}, action_context("alice", runs))
+    assert "subagent_model_name" not in runs.started[-1]["context"]
+
+
+async def test_a_forged_design_flag_is_replaced_and_other_plugins_options_ride_along(designs, runs):
+    design = await new_design(designs, runs)
+    workflows = {"mode": "ultracode", "max_agents": 10, "max_parallel": 4, "max_minutes": 30, "model": "qwen3:8b"}
+    forged = {"cad-design": {"design_id": "f" * 32, "extra": True}, "community.workflows": workflows}
+    await designs.prompt({"design_id": design["id"], "text": "x", "context": {**ULTRA, "mode": "ultracode", "plugin_options": forged}}, action_context("alice", runs))
+    options = runs.started[-1]["context"]["plugin_options"]
+    assert options == {"cad-design": {"design_id": design["id"]}, "community.workflows": workflows}
+    assert forged["cad-design"]["design_id"] == "f" * 32, "the page's own object is not mutated"
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "flash",
+        ["mode", "flash"],
+        {"mode": "turbo"},
+        {"mode": True},
+        {"model_name": "a b"},
+        {"model_name": 7},
+        {"thinking_enabled": "yes"},
+        {"is_plan_mode": 1},
+        {"subagent_enabled": 0},
+        {"reasoning_effort": "very high"},
+        {"reasoning_effort": "x" * 33},
+        {"subagent_model_name": "two words"},
+        {"max_total_subagents": 0},
+        {"max_total_subagents": 51},
+        {"max_total_subagents": True},
+        {"max_concurrent_subagents": 65},
+        {"max_concurrent_subagents": 2.5},
+        {"democracy_participants": ["a"]},
+        {"democracy_participants": ["a", "a"]},
+        {"democracy_participants": [f"m{i}" for i in range(13)]},
+        {"democracy_participants": "a,b"},
+        {"democracy_grading": "ten_point"},
+        {"plugin_options": []},
+        {"plugin_options": {"x": 1}},
+        {"plugin_options": {"a:b": {}}},
+        {"plugin_options": {"": {}}},
+        {"plugin_options": {"x": {"v": float("nan")}}},
+        {"plugin_options": {"x": {"v": object()}}},
+        {"plugin_options": {f"p{i}": {} for i in range(9)}},
+        # The page's eight plus this design's flag is one namespace too many.
+        {"plugin_options": {f"p{i}": {} for i in range(8)}},
+        {"plugin_options": {"x": {"v": "y" * 4100}}},
+    ],
+)
+async def test_an_invalid_run_context_is_refused(designs, runs, context):
+    design = await new_design(designs, runs)
+    with pytest.raises(ValueError):
+        await designs.prompt({"design_id": design["id"], "text": "hi", "context": context}, action_context("alice", runs))
+    assert runs.started == []
+
+
+async def test_the_prompt_text_is_bounded(designs, runs):
+    design = await new_design(designs, runs)
+    for bad in ({"text": ""}, {"text": "  "}, {"text": "x" * 9000}, {}):
         with pytest.raises(ValueError):
             await designs.prompt({"design_id": design["id"], **bad}, action_context("alice", runs))
+    assert runs.started == []
 
 
-async def test_a_long_hand_edit_rides_the_prompt_in_full(designs, runs):
-    design = await new_design(designs, runs)
-    base = await model_version(designs, design, scad="\n".join(f"p{i} = {i};" for i in range(200)))
-    edited = "\n".join(f"p{i} = {i + 1};" for i in range(200))
-    designs.store.add_version("alice", design["id"], parent_id=base["id"], source="hand", scad=edited, params={})
-    await designs.prompt({"design_id": design["id"], "text": "go on"}, action_context("alice", runs))
-    assert edited in runs.started[0]["input"]["messages"][0]["content"]
-
-
-async def test_repair_once_per_failed_model_version(designs, runs):
+async def test_an_older_viewed_version_is_named_in_the_message(designs, runs):
     design = await new_design(designs, runs)
     context = action_context("alice", runs)
-    version = await model_version(designs, design)
-    with pytest.raises(AgentRunError):  # no failed render yet
-        await designs.repair({"design_id": design["id"], "version_id": version["id"]}, context)
-    await designs.report_render({"design_id": design["id"], "version_id": version["id"], "render": {"ok": False, "error": "syntax error", "error_lines": [2]}}, context)
-    await designs.repair({"design_id": design["id"], "version_id": version["id"]}, context)
-    assert runs.started[0]["context"]["plugin_options"]["cad-design"]["phase"] == "repair"
-    with pytest.raises(AgentRunError) as caught:
-        await designs.repair({"design_id": design["id"], "version_id": version["id"]}, context)
-    assert caught.value.status_code == 409
-    fixed = designs.store.add_version("alice", design["id"], parent_id=version["id"], source="repair", scad="cube(1);", params={})
-    await designs.report_render({"design_id": design["id"], "version_id": fixed["id"], "render": {"ok": False, "error": "still"}}, context)
-    with pytest.raises(AgentRunError):  # a repair's own failure gets no second repair
-        await designs.repair({"design_id": design["id"], "version_id": fixed["id"]}, context)
+
+    async def sent(**extra):
+        await designs.prompt({"design_id": design["id"], "text": "make this one taller", **extra}, context)
+        return runs.started[-1]["input"]["messages"][0]["content"]
+
+    older = await sent(viewing=2, newest=5)
+    assert older.startswith("make this one taller") and f"v2 ({FOLDER}/v2)" in older and "not the newest" in older
+    assert await sent(viewing=5, newest=5) == "make this one taller"
+    assert await sent() == "make this one taller"
+    # The page may send viewing alone, only when it is not the newest.
+    assert f"v3 ({FOLDER}/v3)" in await sent(viewing=3)
+    for bad in ({"viewing": 0}, {"viewing": True}, {"viewing": "2"}, {"viewing": 1.5}, {"viewing": 6, "newest": 5}, {"newest": -1}):
+        with pytest.raises(ValueError):
+            await designs.prompt({"design_id": design["id"], "text": "x", **bad}, context)
 
 
-async def test_finalize_needs_a_good_render_and_marks_running(designs, runs):
+async def test_run_status_releases_the_design_once_the_run_ends(designs, runs):
     design = await new_design(designs, runs)
     context = action_context("alice", runs)
-    version = await model_version(designs, design)
-    with pytest.raises(AgentRunError):
-        await designs.finalize({"design_id": design["id"], "version_id": version["id"]}, context)
-    await designs.report_render({"design_id": design["id"], "version_id": version["id"], "render": {"ok": True, "bbox_mm": [10, 10, 10]}}, context)
-    await designs.finalize({"design_id": design["id"], "version_id": version["id"]}, context)
-    started = runs.started[0]
-    assert started["context"]["plugin_options"]["cad-design"] == {"design_id": design["id"], "head": version["id"], "phase": "finalize"}
-    assert CUBE in started["input"]["messages"][0]["content"]
-    final = designs.store.get_version("alice", design["id"], version["id"])["final"]
-    assert final == {"status": "running", "files": [], "draft_bbox_mm": [10.0, 10.0, 10.0], "run_id": "run-1"}
-    # The run ends without a build: run_status says so instead of "running" forever.
+    run = await designs.prompt({"design_id": design["id"], "text": "a plate"}, context)
+    runs.status = "running"
+    assert await designs.run_status({"design_id": design["id"], "run_id": run["run_id"]}, context) == {"status": "running"}
+    assert designs.store.get_design("alice", design["id"])["run_id"] == run["run_id"]
     runs.status = "success"
-    assert (await designs.run_status({"design_id": design["id"], "run_id": "run-1"}, context)) == {"status": "success"}
-    final = designs.store.get_version("alice", design["id"], version["id"])["final"]
-    assert final["status"] == "failed"
+    # Another run's end leaves the design's own run alone.
+    await designs.run_status({"design_id": design["id"], "run_id": "run-other"}, context)
+    assert designs.store.get_design("alice", design["id"])["run_id"] == run["run_id"]
+    assert await designs.run_status({"design_id": design["id"], "run_id": run["run_id"]}, context) == {"status": "success"}
     assert designs.store.get_design("alice", design["id"])["run_id"] is None
 
 
-async def test_a_refused_finalize_does_not_stay_running(designs, runs):
+async def test_cancel(designs, runs):
     design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    version = await model_version(designs, design)
-    await designs.report_render({"design_id": design["id"], "version_id": version["id"], "render": {"ok": True, "bbox_mm": [10, 10, 10]}}, context)
-    runs.refuse = (409, "busy")
-    with pytest.raises(AgentRunError):
-        await designs.finalize({"design_id": design["id"], "version_id": version["id"]}, context)
-    assert designs.store.get_version("alice", design["id"], version["id"])["final"]["status"] == "failed"
+    await designs.cancel({"design_id": design["id"], "run_id": "run-9"}, action_context("alice", runs))
+    assert runs.cancelled == [("thread-1", "run-9")]
 
 
-async def test_messages_are_simplified_and_bounded(designs, runs):
+async def test_messages_show_any_tool_by_name_and_one_line(designs, runs):
     design = await new_design(designs, runs)
+    render = "python3 /mnt/skills/public/cad-modeling/scripts/cadkit.py render /mnt/user-data/workspace/design/model.scad --design /mnt/user-data/outputs/design --print-layout\necho done"
     runs.state = {
         "values": {
             "messages": [
                 {"type": "system", "content": "secret"},
                 {"type": "human", "id": "1", "content": "a cube"},
                 {"type": "human", "id": "h", "content": "hidden", "additional_kwargs": {"hide_from_ui": True}},
-                {"type": "ai", "id": "2", "content": [{"type": "text", "text": "Here"}], "tool_calls": [{"name": SCAD_DRAFT_TOOL, "args": {"code": "x" * 5000}, "id": "c"}]},
-                {"type": "tool", "id": "3", "name": SCAD_DRAFT_TOOL, "content": '{"seq": 1}'},
-                {"type": "tool", "id": "4", "name": CAD_BUILD_TOOL, "content": "{}"},
+                {
+                    "type": "ai",
+                    "id": "2",
+                    "content": [{"type": "text", "text": "Here"}],
+                    "tool_calls": [
+                        {"name": "bash", "args": {"description": "Render v1", "command": render}, "id": "a"},
+                        {"name": "write_file", "args": {"description": "Write the model", "path": "/mnt/user-data/workspace/design/model.scad", "content": "x" * 50000}, "id": "b"},
+                        {"name": "present_files", "args": {"filepaths": [f"/o/{i}.stl" for i in range(8)]}, "id": "c"},
+                        {"name": "custom", "args": {"n": 3, "query": "  \n  second line wins\nthird"}, "id": "d"},
+                        {"name": "nothing", "args": {"n": 3}, "id": "e"},
+                    ],
+                },
+                {"type": "tool", "id": "3", "name": "bash", "content": "y" * 50000},
             ]
         }
     }
     shown = (await designs.messages({"design_id": design["id"]}, action_context("alice", runs)))["messages"]
-    assert [m["role"] for m in shown] == ["user", "assistant", "tool", "tool"]
-    assert shown[1]["text"] == "Here" and shown[1]["tool_calls"][0]["name"] == "scad_draft"
-    assert len(shown[1]["tool_calls"][0]["args"]["code"]) < 4100
-    assert [shown[2]["tool_name"], shown[3]["tool_name"]] == ["scad_draft", "cad_build"]
+    assert [m["role"] for m in shown] == ["user", "assistant", "tool"]
+    assert shown[1]["text"] == "Here"
+    assert shown[1]["tool_calls"] == [
+        {"name": "bash", "summary": render.splitlines()[0]},
+        {"name": "write_file", "summary": "/mnt/user-data/workspace/design/model.scad"},
+        {"name": "present_files", "summary": "/o/0.stl, /o/1.stl, /o/2.stl, /o/3.stl, /o/4.stl (+3 more)"},
+        {"name": "custom", "summary": "second line wins"},
+        {"name": "nothing", "summary": ""},
+    ]
+    assert "args" not in shown[1]["tool_calls"][1], "a call's arguments (a whole file) never reach the page"
+    assert shown[2]["tool_name"] == "bash" and len(shown[2]["text"]) == MAX_TOOL_CHARS + 3
     assert len(simplify_messages([{"type": "human", "content": "x"}] * 500)) == 200
 
 
-async def test_cancel_and_get_version(designs, runs):
-    design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    version = await model_version(designs, design)
-    await designs.cancel({"design_id": design["id"], "run_id": "run-9"}, context)
-    assert runs.cancelled == [("thread-1", "run-9")]
-    assert (await designs.get_version({"design_id": design["id"], "version_id": version["id"]}, context))["version"]["scad"] == CUBE
-    got = await designs.get_design({"design_id": design["id"]}, context)
-    assert got["design"]["head_version_id"] == version["id"] and got["versions"][0]["scad"] == CUBE
+def test_summaries_ignore_what_is_not_an_argument_map():
+    assert summarize_args(None) == summarize_args(["ls"]) == summarize_args({}) == ""
+    assert summarize_args({"command": "", "description": "Look around"}) == "Look around"
+    assert summarize_args({"command": "echo " + "x" * 500}) == ("echo " + "x" * 500)[:MAX_SUMMARY_CHARS] + "..."
 
 
-async def test_a_file_the_user_wrote_before_any_model_version_reaches_the_model(designs, runs):
-    """With no model version to diff against, the note has no diff, so the prompt carries the file."""
-    design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    hand = "wall = 2; // [1:0.5:5]\ncube([40, 20, wall]);\n"
-    saved = (await designs.save_version({"design_id": design["id"], "parent_id": None, "scad": hand, "params": {"wall": 2}, "source": "hand"}, context))["version"]
-    await designs.prompt({"design_id": design["id"], "text": "make the wall thicker"}, context)
-    message = runs.started[-1]["input"]["messages"][0]["content"]
-    assert message.startswith("make the wall thicker") and hand in message
-    # A slider move on top of it is still the user's own file.
-    designs.store.add_version("alice", design["id"], parent_id=saved["id"], source="slider", scad=hand.replace("2;", "3;"), params={"wall": 3})
-    runs.status = "success"
-    await designs.prompt({"design_id": design["id"], "text": "again"}, context)
-    assert "wall = 3;" in runs.started[-1]["input"]["messages"][0]["content"]
+def test_a_non_string_mode_is_a_bad_value_not_a_server_error():
+    from deerflow_extension_cad_design.actions import design_run_context
 
-
-async def test_a_short_edit_of_a_model_version_rides_the_note_not_the_message(designs, runs):
-    design = await new_design(designs, runs)
-    context = action_context("alice", runs)
-    base = await model_version(designs, design)
-    designs.store.add_version("alice", design["id"], parent_id=base["id"], source="hand", scad=CUBE.replace("10;", "12;"), params={"size": 12})
-    await designs.prompt({"design_id": design["id"], "text": "round it"}, context)
-    assert runs.started[-1]["input"]["messages"][0]["content"] == "round it"
+    for bad in ([], {}, ["flash"], 3):
+        try:
+            design_run_context({"mode": bad}, "a" * 32)
+        except ValueError:
+            continue
+        raise AssertionError(f"mode={bad!r} was accepted")

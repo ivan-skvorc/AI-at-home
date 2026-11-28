@@ -48,7 +48,10 @@ import {
   ModelSelectorTrigger,
 } from "../ai-elements/model-selector";
 
-import { DoubleUltracodeWarningTooltip, ModeHoverGuide } from "./mode-hover-guide";
+import {
+  DoubleUltracodeWarningTooltip,
+  ModeHoverGuide,
+} from "./mode-hover-guide";
 import {
   ModelDisplayName,
   ModelPickerControls,
