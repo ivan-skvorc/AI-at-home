@@ -11,8 +11,9 @@ You design the part as parametric OpenSCAD and prove it on the model before
 anyone prints it. `scripts/cadkit.py` does the mechanical work inside the
 container: it renders every body to its own STL, measures the bodies, checks
 them against each other in every pose, draws sections and a shaded render,
-checks the print layout and runs a slicer, and writes STEP and 3MF. You decide
-what to build, read every result, and fix what failed.
+checks the print layout and runs a slicer, writes STEP and 3MF and reads each
+back, and makes a guide and a zip to deliver. You decide what to build, read
+every result, and fix what failed.
 
 Every version runs the same loop, and you keep running it until every check
 passes or a check shows the idea cannot work:
@@ -111,6 +112,12 @@ be one, listed under `ignore`). Read `tight` gaps against the fit you intended.
 Fix the cause, render again, and check again: a fix often moves a clash
 somewhere else.
 
+Choosing a dimension: when one size decides between a clash and a fit (a hinge
+radius, a slot width), try several in one run with `cadkit.py study model.scad
+--design /mnt/user-data/outputs/<design> --param r=8,10,12 --poses poses.json`.
+It renders each value outside the versions, prints a row per value (clashes,
+smallest gap, volumes) and draws `compare.png`; set the value it picks and render.
+
 ## Step 5: Check by eye
 
 ```bash
@@ -133,7 +140,9 @@ python3 /mnt/skills/public/cad-modeling/scripts/cadkit.py print /mnt/user-data/o
 It checks the print layout: bed contact, overhangs, bridges and one-sided
 ledges, thin walls, gaps between bodies printed together, the bed size, and
 slices without supports for grams and time. Fix every `PROBLEM`, or tell the
-user why it stays. Then work out the loads by hand with
+user why it stays. For a joint or fit that matters, cut it out with `cadkit.py
+testpiece /mnt/user-data/outputs/<design> --box x0,y0,z0,x1,y1,z1` and offer
+those pieces as a short print to try first. Then work out the loads by hand with
 `references/strength.md`: for each part that carries load, the force, the
 stress, the material's limit and the safety factor. Write the arithmetic down.
 
@@ -147,12 +156,23 @@ change the clearance or the feature it names and say so.
 
 ## Step 8: Deliver
 
+Write the assembly steps to `steps.md` beside the model, one step per paragraph.
+
 ```bash
-python3 /mnt/skills/public/cad-modeling/scripts/cadkit.py export /mnt/user-data/outputs/<design> --step --3mf
+python3 /mnt/skills/public/cad-modeling/scripts/cadkit.py guide /mnt/user-data/outputs/<design> --steps steps.md
+python3 /mnt/skills/public/cad-modeling/scripts/cadkit.py export /mnt/user-data/outputs/<design> --step --3mf --zip
 ```
 
-Present the files with `present_files`: the print-layout STLs or the 3MF, the
-STEP, `model.scad`, and the two view images. Then report in this order:
+`guide` writes `guide.pdf`: parts, a page per body, the steps, the checks.
+`export` reads every file back and packs `<design>-v<N>.zip` with a manifest; a
+`FAIL` line is a file that does not match its body, so fix it first. For a STEP
+the user will edit, rebuild that body in CadQuery in the container, save it as
+`v<N>/<body>-cq.step`, and prove it in that folder with `cadkit.py compare
+<body>.stl <body>-cq.step`; only a `PASS` joins the zip.
+
+Present the files with `present_files`: the zip, `guide.pdf`, the print-layout
+STLs or the 3MF, the STEP, `model.scad`, and the two view images. Then report
+in this order:
 
 - **Build**: the bodies, the version, what each version changed and why.
 - **Checks by numbers**: poses and sweeps checked, clashes found and fixed, the

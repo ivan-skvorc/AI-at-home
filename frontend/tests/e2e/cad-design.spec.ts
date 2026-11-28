@@ -80,17 +80,27 @@ test("a prompt streams the run and the preview shows the new version's bodies, v
   ).toBeVisible();
   await expect(page.getByText(/^No version yet/)).toBeVisible();
 
+  // The run stays active after its stream ends, so the listing that shows v1
+  // can only be the one the stream's tool result asked for: the design's
+  // opening listing has already found no folder, and the run has not settled.
+  await expect.poll(() => backend.fileRequests).toContain(`list ${FOLDER}`);
+  backend.holdRun = true;
   await prompt(page).fill("A 60 x 40 mm plate with a peg");
   await send(page);
 
   // The stream's bash call and its result: the folder is listed again and
   // the new version's bodies come from report.json and their STL files.
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Version" })).toHaveValue(
     "1",
   );
   const bodies = page.getByRole("list", { name: "Bodies" });
   await expect(bodies.getByText("plate", { exact: true })).toBeVisible();
   await expect(bodies.getByText("peg", { exact: true })).toBeVisible();
+  await expect(stop).toBeVisible();
+  await expect(prompt(page)).toBeDisabled();
+  backend.holdRun = false;
   await expect(bodies.getByText(/^60 × 40 × 6 mm/)).toBeVisible();
   await expect(bodies.getByText(/^10 × 10 × 21 mm/)).toBeVisible();
   await expect(

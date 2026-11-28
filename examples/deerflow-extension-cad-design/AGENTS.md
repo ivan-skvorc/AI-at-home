@@ -18,9 +18,10 @@ cd ../frontend && pnpm exec playwright test cad-design
 - **Model-written code runs only in the per-thread container, never in the
   Gateway.** The backend stores titles and starts runs; it renders, parses and
   serves no design file. A server-side render, check or file route breaks that
-  boundary. `container` in `get_design` (`HostPolicySnapshot.sandbox_container`)
-  tells the page whether the host runs such containers, and the page shows the
-  setup commands when it does not.
+  boundary. `HostPolicySnapshot.sandbox_container` says whether the host runs
+  such containers: `get_design` hands it to the page, which then shows the setup
+  commands, and the middleware gives the model the setup line, because a `bash`
+  tool alone may be host bash or the one external container every thread shares.
 - **The version folders are the versions.** The store keeps designs only. Files
   from the first release also hold a `versions` table and a `head_version_id`
   column; they must keep opening (`tests/test_store.py`), so never alter or drop

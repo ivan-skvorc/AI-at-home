@@ -82,3 +82,53 @@ cadkit's answers means.
 - `slicer says:` the slicer's own warning, such as low bed adhesion or a
   suggestion to enable supports, with the files it names. Treat it like any
   other problem.
+
+`export`
+
+- `read back as written`: each file was read again and matched its body:
+  every STL its report.json; each STEP re-imported as one solid with closed
+  shells, its volume within 0.5% and its bounding box within 0.05 mm of the
+  mesh; `bodies.3mf` one object per body, each with its body's volume.
+  `export.json` holds every result.
+- `FAIL <file>: ...`: that file does not match the body it came from, so
+  `zip not written`, and an earlier zip is removed. Export again; when it
+  fails again, the body itself is broken (see `render`).
+- `<design>-v<N>.zip`: the print-layout STLs (or the assembled ones), the 3MF,
+  the STEP files, `model.scad`, `guide.pdf`, the view images, the test pieces,
+  the JSON results, and `manifest.json`: the bodies, the slicer's settings,
+  grams and time, the checks, and each file with its size and sha256.
+- `<body>-cq.step left out of the zip`: an editable STEP joins the zip only
+  after `compare` passed on it in the version folder.
+
+`study`
+
+- One row per value: the `clashes` over every state of the poses, the
+  `smallest gap`, and each body's volume. `render error` and `not closed` mark
+  a value whose bodies failed; the lines below the table say which.
+- `passes:` the values whose bodies are all closed with no clash.
+  `no value passes` exits 1. The study lives in `<design>/studies/<name>/`,
+  outside the versions, and the same name run again replaces it. `compare.png` is one
+  column per value at one scale; `--section z=5` picks its plane.
+- `assigns no <name> at the top level`: `-D` only overrides a top-level
+  assignment, so every value may render the same model.
+
+`testpiece`
+
+- One line per piece: its size, volume and share of its body. The pieces keep
+  their assembled position, in `v<N>/test/`; lay each flat to print it.
+  `views` and `print` take `v<N>/test` like a version.
+- `left out, the box misses them`: bodies the box does not reach. A body named
+  in `--bodies` that the box misses, or a box that misses every body, is an
+  `ERROR ... holds nothing of`. Write `--box=-5,...` when the first number is
+  negative.
+- `CLASH`, `tight` and `smallest gap` between the pieces read as in `check`.
+
+`compare`
+
+- `volume differs by` and `bounding boxes by at most`: B against A.
+- `symmetric difference`: the volume inside one solid and not the other, as a
+  share of A's volume. `PASS` is below `--tolerance` (1%). A round feature at
+  `$fn = 48` differs from its true circle by about 0.3%.
+- `largest surface deviation`: the farthest a sampled point of one surface lies
+  from the other, and where. A missing hole or boss shows here even when the
+  volumes are close.

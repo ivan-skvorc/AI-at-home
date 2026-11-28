@@ -9,13 +9,16 @@ local environment that has them. Every test writes under tmp_path.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -260,6 +263,184 @@ def test_a_missing_model_exits_2(tmp_path, capsys, numpy_only):
     assert not (tmp_path / "design").exists()
 
 
+# ---------------------------------------------------------------- study, testpiece, guide and the zip
+
+
+@pytest.mark.parametrize(("text", "box"), [("0,0,0,30,20,15", ([0, 0, 0], [30, 20, 15])), ("-5,-2.5,0,5,2.5,1e1", ([-5, -2.5, 0], [5, 2.5, 10]))])
+def test_a_box_is_two_corners(text, box):
+    assert cadkit._parse_box(text) == box
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [("0,0,0,30,20", "six numbers"), ("0,0,0,a,20,15", "six numbers"), ("0,0,0,inf,1,1", "six numbers"), ("0,0,0,30,0,15", "larger than"), ("10,0,0,5,5,5", "larger than")],
+)
+def test_a_malformed_box_is_refused(text, message):
+    with pytest.raises(cadkit.Unusable, match=message):
+        cadkit._parse_box(text)
+
+
+def test_a_bad_box_exits_2_before_anything_is_loaded(tmp_path, capsys):
+    code, out, err = run(capsys, "testpiece", tmp_path, "--box", "0,0,0,1,1")
+    assert code == 2 and out == "" and err.startswith("ERROR: --box '0,0,0,1,1': six numbers")
+
+
+def test_a_study_parameter_is_a_name_and_values_each_with_a_safe_folder():
+    assert cadkit._parse_param("r=8, 10,12.5", []) == ("r", [("8", "8"), ("10", "10"), ("12.5", "12.5")])
+    # A value is what -D takes; its folder keeps safe characters only, so no value names a path.
+    assert cadkit._parse_param('label="M3",-0.5,true', ["wall=2"])[1] == [('"M3"', "M3"), ("-0.5", "-0.5"), ("true", "true")]
+    assert cadkit._parse_param("gap=..", [])[1] == [("..", "value")]
+
+
+@pytest.mark.parametrize(
+    ("text", "defines", "message"),
+    [
+        ("r", [], "name=v1,v2"),
+        ("2r=1,2", [], "name=v1,v2"),
+        ("r=1,,2", [], "a value is empty"),
+        ("r=" + ",".join(str(v) for v in range(13)), [], "at most 12 values"),
+        ("r=1,2", ["r=3"], "sets r, which --param varies"),
+        ("r=1,../x", [], "without spaces or slashes"),
+        ("r=1,a b", [], "without spaces or slashes"),
+        ("r=1,1", [], "would share the folder 1"),
+        ('r="a",a', [], "would share the folder a"),
+    ],
+)
+def test_a_malformed_study_parameter_is_refused(text, defines, message):
+    with pytest.raises(cadkit.Unusable, match=message):
+        cadkit._parse_param(text, defines)
+
+
+def test_a_bad_study_parameter_exits_2_and_makes_no_folder(tmp_path, capsys, numpy_only):
+    code, out, err = run(capsys, "study", _model(tmp_path), "--design", tmp_path / "design", "--param", "r=1,../x")
+    assert code == 2 and out == "" and "without spaces or slashes" in err
+    assert not (tmp_path / "design").exists()
+
+
+def test_assembly_steps_are_paragraphs_with_their_own_numbering_dropped(tmp_path):
+    path = tmp_path / "steps.md"
+    path.write_text(
+        "# Assembly\n\n1. Push the pin\n   through the hole.\n\nStep 2: Turn it.\n- Snap the lid on.\n* Check it turns.\n\n2.5 mm spacer goes first.\n\n\n",
+        encoding="utf-8",
+    )
+    # A list written without blank lines is still one step per item; a heading is not a step.
+    assert cadkit._read_steps(path) == (["Push the pin through the hole.", "Turn it.", "Snap the lid on.", "Check it turns.", "2.5 mm spacer goes first."], False)
+
+
+def test_assembly_steps_are_bounded(tmp_path):
+    path = tmp_path / "steps.md"
+    path.write_text("\n\n".join(["x" * 2000] + [f"part {i} goes in" for i in range(40)]), encoding="utf-8")
+    steps, cut = cadkit._read_steps(path)
+    assert cut and len(steps) == cadkit.MAX_STEPS and len(steps[0]) == cadkit.MAX_STEP_CHARS and steps[0].endswith("…")
+    with pytest.raises(cadkit.Unusable, match="--steps"):
+        cadkit._read_steps(tmp_path / "missing.md")
+
+
+def test_a_body_page_lists_the_print_problems_that_name_the_body():
+    problems = [
+        "base starts at z=1.00, above the bed (z=0.00): it would print in mid-air",
+        "base: 3 of 3000 samples thinner than 0.8 mm at x 0.0..1.0",
+        "rest / base only 0.1 mm apart (< 0.3): may fuse",
+        "baseplate has no flat face on the bed",
+        "slicer says: Low bed adhesion / base.stl, strut.stl",
+        "slicer says: Low bed adhesion / database.stl",
+    ]
+    assert cadkit._problems_of("base", problems) == [problems[0], problems[1], problems[2], problems[4]]
+
+
+def test_the_checks_page_says_what_was_not_checked():
+    lines = cadkit._check_lines(None, None, None)
+    assert [line.split(";")[0] for line in lines] == ["Poses and sweeps: not checked", "Print: not checked"]
+
+
+def test_the_checks_page_reads_the_check_print_and_export_results():
+    check = {
+        "clearance_mm": 0.3,
+        "results": [
+            {"pose": "seated", "state": "seated", "clashes": [], "gaps": [{"pair": ["a", "b"], "min_gap_mm": 0.5, "tight": False}]},
+            {"pose": "swing", "state": "swing @ 0 deg", "clashes": [], "gaps": [{"pair": ["a", "b"], "min_gap_mm": 0.2, "tight": True}]},
+            {"pose": "swing", "state": "swing @ 90 deg", "clashes": [{"pair": ["a", "b"], "overlap_mm3": 5.0, "where": "x 0.0..1.0"}], "gaps": []},
+        ],
+    }
+    printed = {"version": "v1/print", "bed_mm": [250, 210, 220], "problems": ["a: bridge spans 20 mm"], "slicer": {"filament_g": "3.84", "time": "22m 17s", "settings": "0.4 mm nozzle"}}
+    exported = {"verified": [{"file": "a.step", "ok": True}, {"file": "b.step", "ok": False, "problems": ["volume off"]}]}
+    assert cadkit._check_lines(check, printed, exported) == [
+        "Poses and sweeps: 3 states across 2 poses (1 sweeps), clearance 0.3 mm.",
+        "Clash: a / b in pose swing, worst 5.0 mm3 at [swing @ 90 deg], x 0.0..1.0.",
+        "Smallest gap: 0.2 mm, a / b at [swing @ 0 deg].",
+        "Print check of v1/print on a 250 x 210 x 220 mm bed: 1 problems.",
+        "Problem: a: bridge spans 20 mm",
+        "Slicer, the whole plate in one print: 3.84 g, 22m 17s (0.4 mm nozzle).",
+        "Export: 1 of 2 files read back as the bodies they came from.",
+        "Mismatch: b.step: volume off",
+    ]
+
+
+def _delivery(tmp_path) -> Path:
+    """A rendered version as files only: what the zip may take, a link out of it, and a report that names a path."""
+    version = tmp_path / "outputs" / "stand" / "v2"
+    (version / "print").mkdir(parents=True)
+    (version / "views").mkdir()
+    (tmp_path / "secret.png").write_bytes(b"not yours")
+    body = {"file": "base.stl", "size_mm": [10, 20, 30], "volume_mm3": 6000.0, "solid_mass_g_pla": 7.4, "triangles": 12}
+    (version / "report.json").write_text(json.dumps({"version": "v2", "bodies": {"base": body, "ghost": {"error": "empty", "file": "ghost.stl"}}}))
+    (version / "print" / "report.json").write_text(json.dumps({"version": "v2/print", "bodies": {"base": body, "evil": {"file": "../../../secret.png"}}}))
+    for name in ("base.stl", "print/base.stl", "base.step", "base-cq.step", "model.scad", "views/shaded.png", "notes.txt", "stand-v1.zip"):
+        (version / name).write_bytes(name.encode() * 3)
+    (version / "base-cq.compare.json").write_text(json.dumps({"passed": True, "b": str(version / "base-cq.step"), "symmetric_difference_pct": 0.2}))
+    (version / "views" / "link.png").symlink_to(tmp_path / "secret.png")
+    return version
+
+
+def test_the_zip_takes_only_deliverables_inside_the_version_folder(tmp_path):
+    version = _delivery(tmp_path)
+    members = [arcname for _, arcname in cadkit._zip_members(version)]
+    # The print layout's STLs before the assembled ones; no link, no ../ name, no notes, no older zip.
+    assert members == ["print/base.stl", "base.step", "base-cq.step", "model.scad", "views/shaded.png", "report.json", "print/report.json"]
+    # An editable STEP goes in only on a passing compare.
+    (version / "base-cq.compare.json").write_text(json.dumps({"passed": False, "b": str(version / "base-cq.step")}))
+    assert "base-cq.step" not in [arcname for _, arcname in cadkit._zip_members(version)]
+
+
+def test_the_zip_carries_a_manifest_and_reads_back_against_it(tmp_path):
+    version = _delivery(tmp_path)
+    entry = cadkit._write_zip(version, [{"file": "base.stl", "kind": "STL", "ok": True, "problems": []}])
+    assert entry["ok"] and entry["file"] == "stand-v2.zip" and entry["files"] == 8
+    with zipfile.ZipFile(version / "stand-v2.zip") as archive:
+        names = archive.namelist()
+        manifest = json.loads(archive.read("manifest.json"))
+        assert names == [item["path"] for item in manifest["files"]] + ["manifest.json"]
+        for item in manifest["files"]:
+            assert item["sha256"] == hashlib.sha256(archive.read(item["path"])).hexdigest() == hashlib.sha256((version / item["path"]).read_bytes()).hexdigest()
+            assert item["bytes"] == (version / item["path"]).stat().st_size
+    assert (manifest["design"], manifest["version"], manifest["made_by"]) == ("stand", "v2", "cadkit.py export --zip")
+    assert manifest["bodies"] == {"base": {"size_mm": [10, 20, 30], "volume_mm3": 6000.0, "solid_mass_g_pla": 7.4}}
+    assert manifest["editable_step"] == {"base": {"file": "base-cq.step", "symmetric_difference_pct": 0.2}}
+    assert manifest["checks"] == {"poses": "not run", "print": "not run", "export": {"files_read_back": 1, "mismatches": 0}}
+    assert manifest["print"] is None and "nothing was printed" in manifest["limit"]
+    assert not list(version.glob(".*.partial"))
+
+
+def test_export_needs_something_to_write(tmp_path, capsys, numpy_only):
+    version = _delivery(tmp_path)
+    code, out, err = run(capsys, "export", version)
+    assert code == 2 and out == "" and err.startswith("ERROR: choose --step, --3mf, --zip or several.")
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["a.obj", "b.stl"], "A a.obj: compare reads .stl, .3mf (one body), .step or .stp."),
+        (["a.stl", "b.stl"], "does not exist"),
+        (["a.stl", "b.stl", "--tolerance", "0"], "--tolerance is a percentage"),
+        (["a.stl", "b.stl", "--samples", "10"], "--samples is 100 to 50000"),
+    ],
+)
+def test_compare_refuses_what_it_cannot_measure_before_loading_anything(tmp_path, capsys, argv, message):
+    code, out, err = run(capsys, "compare", *[tmp_path / arg if arg.endswith((".obj", ".stl")) else arg for arg in argv])
+    assert code == 2 and out == "" and err.startswith("ERROR: ") and message in err
+
+
 # ---------------------------------------------------------------- end to end
 
 E2E_MISSING = [name for name in ("trimesh", "manifold3d") if importlib.util.find_spec(name) is None] + ([] if shutil.which("openscad") else ["openscad"])
@@ -477,3 +658,161 @@ def test_export_writes_a_step_per_body_that_reads_back_as_the_solid(tmp_path, ca
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(reader.OneShape(), props)
     assert props.Mass() == pytest.approx(6000, rel=0.01)
+
+
+@needs_cad
+def test_export_reads_every_file_back_and_zips_the_delivery(tmp_path, capsys):
+    pytest.importorskip("OCP")
+    pytest.importorskip("lxml")
+    design, code, out, err = render(capsys, tmp_path, TWO_BOXES, "--print-layout")
+    assert code == 0, out + err
+    assert run(capsys, "views", design)[0] == 0
+    code, out, err = run(capsys, "export", design, "--step", "--3mf", "--zip")
+    assert code == 0, out + err
+    version = design / "v1"
+    assert "read back as written: a.stl, b.stl, print/a.stl, print/b.stl, a.step, b.step, bodies.3mf, design-v1.zip" in out
+    assert "PASS: every file reads back as the body it came from" in out
+    result = json.loads((version / "export.json").read_text())
+    assert result["mismatches"] == 0 and [v["file"] for v in result["verified"]] == ["a.stl", "b.stl", "print/a.stl", "print/b.stl", "a.step", "b.step", "bodies.3mf"]
+    step = next(v for v in result["verified"] if v["file"] == "a.step")
+    assert (step["solids"], step["open_shells"]) == (1, 0) and step["volume_off_pct"] < 0.5 and step["box_off_mm"] <= 0.05
+    assert next(v for v in result["verified"] if v["file"] == "bodies.3mf")["volumes_mm3"] == {"a": 6000, "b": 6000}
+    with zipfile.ZipFile(version / "design-v1.zip") as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert archive.namelist() == ["print/a.stl", "print/b.stl", "bodies.3mf", "a.step", "b.step", "model.scad", "views/sections.png", "views/shaded.png", "report.json", "print/report.json", "manifest.json"]
+        for item in manifest["files"]:
+            assert hashlib.sha256(archive.read(item["path"])).hexdigest() == item["sha256"] == hashlib.sha256((version / item["path"]).read_bytes()).hexdigest()
+    assert (manifest["design"], manifest["version"], manifest["bodies"]["a"]["volume_mm3"]) == ("design", "v1", 6000)
+    assert manifest["checks"] == {"poses": "not run", "print": "not run", "export": {"files_read_back": 7, "mismatches": 0}}
+    # A STEP that is not its body's: export says which file and why, and leaves no zip to deliver.
+    shutil.copyfile(version / "b.step", version / "a.step")
+    code, out, _ = run(capsys, "export", design, "--zip")
+    assert code == 1
+    assert "FAIL a.step: bounding box 10.500 mm off its mesh's (> 0.05 mm)" in out and "FAIL: 1 file does not read back as written" in out
+    assert "zip not written, and the earlier design-v1.zip removed" in out and not (version / "design-v1.zip").exists()
+
+
+@needs_cad
+def test_guide_writes_a_page_per_part_and_says_what_was_not_checked(tmp_path, capsys):
+    pytest.importorskip("matplotlib")
+    design, code, _, _ = render(capsys, tmp_path, TWO_BOXES, "--print-layout")
+    assert code == 0
+    # Nothing checked and no steps: every page is still there, each gap a line saying so. A "$" is text, not math.
+    code, out, err = run(capsys, "guide", design, "--title", "Two $boxes$ for 5$")
+    assert code == 0, out + err
+    # Cover, parts, a page per body, assembly, checks.
+    assert out.startswith("v1: guide.pdf written, 6 pages")
+    assert "note: no check.json" in out and "note: no print.json" in out and "note: no --steps" in out
+    pdf = (design / "v1" / "guide.pdf").read_bytes()
+    assert pdf.startswith(b"%PDF") and len(re.findall(rb"/Type\s*/Page\b", pdf)) == 6
+    assert not list((design / "v1").glob(".*.partial"))
+    assert run(capsys, "check", design)[0] == 0
+    run(capsys, "print", design)
+    steps = tmp_path / "workspace" / "steps.md"
+    steps.write_text("1. Stand a on the bench.\n\n2. Set b beside it, 0.5 mm away.\n")
+    code, out, _ = run(capsys, "guide", design, "--steps", steps)
+    assert code == 0 and "note:" not in out
+    code, _, err = run(capsys, "guide", design, "--steps", tmp_path / "missing.md")
+    assert code == 2 and err.startswith("ERROR: --steps")
+
+
+@needs_cad
+def test_study_renders_each_value_outside_the_versions_and_tabulates_them(tmp_path, capsys):
+    pytest.importorskip("matplotlib")
+    work = tmp_path / "workspace"
+    work.mkdir()
+    (work / "model.scad").write_text(TWO_BOXES)
+    design = tmp_path / "outputs" / "design"
+    code, out, err = run(capsys, "study", work / "model.scad", "--design", design, "--param", "gap=0.5,-2,0.1")
+    assert code == 0, out + err
+    lines = out.splitlines()
+    assert lines[0].startswith("study gap: 3 values rendered in ") and lines[0].endswith(str(design / "studies" / "gap"))
+    assert [line.split() for line in lines[2:6]] == [
+        ["gap", "clashes", "smallest", "gap", "a", "mm3", "b", "mm3"],
+        ["0.5", "0", "0.5", "6000", "6000"],
+        ["-2", "1", "-", "6000", "6000"],
+        ["0.1", "0", "0.1", "6000", "6000"],
+    ]
+    assert "passes: 0.5, 0.1 (every body a closed solid, no clash in any state)" in out
+    # The study is no version: the design page's list stays as it was.
+    assert sorted(p.name for p in design.iterdir()) == ["studies"]
+    root = design / "studies" / "gap"
+    assert (root / "-2" / "a.stl").is_file() and (root / "compare.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    study = json.loads((root / "study.json").read_text())
+    assert [(r["value"], r["clashes"], r["passes"]) for r in study["results"]] == [("0.5", 0, True), ("-2", 1, False), ("0.1", 0, True)]
+    # check and views take a value's folder like a version.
+    code, out, _ = run(capsys, "check", root / "-2")
+    assert code == 1 and out.startswith("studies/gap/-2: 1 states checked")
+    # Run again under the same name, it replaces the last run; no value passing exits 1.
+    code, out, _ = run(capsys, "study", work / "model.scad", "--design", design, "--param", "gap=-2,-1", "--section", "y=10")
+    assert code == 1 and "no value passes" in out and "the y = 10 section" in out
+    assert sorted(p.name for p in root.iterdir()) == ["-1", "-2", "compare.png", "model.scad", "study.json"]
+
+
+@needs_cad
+def test_testpiece_cuts_the_joint_out_of_each_body(tmp_path, capsys):
+    design, code, _, _ = render(capsys, tmp_path, TWO_BOXES)
+    assert code == 0
+    # A slab across the gap between a (x 0..10) and b (x 10.5..20.5), 10 mm tall.
+    code, out, err = run(capsys, "testpiece", design, "--box", "6,0,0,14.5,20,10")
+    assert code == 0, out + err
+    assert out.startswith("v1/test: 2 pieces cut by the box x 6.0..14.5 y 0.0..20.0 z 0.0..10.0")
+    assert "  a: 4 x 20 x 10 mm, vol 800 mm3, ~1 g solid PLA, 13.3% of the body" in out
+    assert "smallest gap: 0.5 mm, a / b" in out and "PASS: the pieces do not overlap" in out
+    folder = design / "v1" / "test"
+    result = json.loads((folder / "test.json").read_text())
+    assert {name: piece["volume_mm3"] for name, piece in result["pieces"].items()} == {"a": 800, "b": 800}
+    assert result["box_mm"] == [6, 0, 0, 14.5, 20, 10] and result["clashes"] == []
+    code, out, _ = run(capsys, "views", folder)
+    assert code == 0 and out.startswith("v1/test: views written")
+    # By default a body the box misses is left out; a body named in --bodies must be cut.
+    code, out, _ = run(capsys, "testpiece", design, "--box", "0,0,0,5,5,5")
+    assert code == 0 and "1 piece cut" in out and "left out, the box misses them: b" in out
+    code, out, err = run(capsys, "testpiece", design, "--box", "0,0,0,5,5,5", "--bodies", "a,b")
+    assert code == 2 and out == ""
+    assert err.startswith("ERROR: the box x 0.0..5.0 y 0.0..5.0 z 0.0..5.0 holds nothing of b (b spans x 10.5..20.5")
+    assert sorted(p.name for p in folder.glob("*.stl")) == ["a.stl"]
+    code, _, err = run(capsys, "testpiece", design, "--box", "0,0,0,5,5,5", "--bodies", "c")
+    assert code == 2 and "no body 'c'" in err
+
+
+@needs_cad
+def test_compare_proves_a_step_against_its_stl_and_catches_another_solid(tmp_path, capsys):
+    pytest.importorskip("OCP")
+    design, code, _, _ = render(capsys, tmp_path, TWO_BOXES)
+    assert code == 0 and run(capsys, "export", design, "--step")[0] == 0
+    version = design / "v1"
+    code, out, err = run(capsys, "compare", version / "a.stl", version / "a.step")
+    assert code == 0, out + err
+    assert "symmetric difference: 0.0 mm3, 0.00% of A" in out and "PASS: symmetric difference 0.00% < 1% of A" in out
+    result = json.loads((version / "a.compare.json").read_text())
+    assert result["passed"] and result["b_info"]["solids"] == 1 and result["max_deviation_mm"] < 0.01
+    # b is a 6000 mm3 box beside a: the volumes agree, so only the symmetric difference and the deviation tell them apart.
+    code, out, _ = run(capsys, "compare", version / "a.stl", version / "b.stl")
+    assert code == 1 and "volume differs by +0.0 mm3 (0.00% of A)" in out and "FAIL: symmetric difference 200.00% >= 1% of A" in out
+    # Every point of a's far face is 10.5 mm from b's near face, and b's far face as far from a.
+    assert "largest surface deviation: 10.500 mm at (" in out
+
+
+@needs_cad
+def test_a_body_rebuilt_in_cadquery_is_proven_and_joins_the_zip(tmp_path, capsys):
+    cq = pytest.importorskip("cadquery")
+    pytest.importorskip("lxml")
+    design, code, _, _ = render(capsys, tmp_path, TWO_BOXES)
+    assert code == 0
+    version = design / "v1"
+    cq.exporters.export(cq.Workplane().box(10, 20, 30, centered=False), str(version / "a-cq.step"))
+    # 1 mm short: compare fails it, so export leaves it out.
+    cq.exporters.export(cq.Workplane().box(10.5, 20, 29, centered=False).translate((10, 0, 0)), str(version / "b-cq.step"))
+    assert run(capsys, "compare", version / "a.stl", version / "a-cq.step")[0] == 0
+    assert run(capsys, "compare", version / "b.stl", version / "b-cq.step")[0] == 1
+    code, out, err = run(capsys, "export", design, "--3mf", "--zip")
+    assert code == 0, out + err
+    assert "b-cq.step left out of the zip: no passing compare. Run cadkit.py compare b.stl b-cq.step in this folder." in out
+    with zipfile.ZipFile(version / "design-v1.zip") as archive:
+        assert "a-cq.step" in archive.namelist() and "b-cq.step" not in archive.namelist()
+        editable = json.loads(archive.read("manifest.json"))["editable_step"]
+    assert list(editable) == ["a"] and editable["a"]["symmetric_difference_pct"] == pytest.approx(0, abs=0.01)
+    # A 3MF holds both bodies: compare takes one solid per file.
+    code, _, err = run(capsys, "compare", version / "a.stl", version / "bodies.3mf")
+    assert code == 2 and "holds 2 bodies" in err

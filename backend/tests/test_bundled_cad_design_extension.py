@@ -34,7 +34,7 @@ BACKEND = REPO_ROOT / "backend"
 EXAMPLE = REPO_ROOT / "examples" / "deerflow-extension-cad-design"
 SNAPSHOT = BACKEND / "extensions" / "sources" / "deerflow-extension-cad-design"
 _LOCAL_CACHES = (".ruff_cache", ".pytest_cache")
-# The example's build tools (three, CodeMirror, esbuild). The bundle they build
+# The example's build tools (three, esbuild). The bundle they build
 # ships in static/dist; the tools never reach the snapshot.
 _BUILD_TOOLS = ("node_modules",)
 RECORD = {
@@ -180,13 +180,14 @@ def test_the_brief_middleware_rides_the_lead_stack_only(tmp_path, monkeypatch):
     assert not diagnostics, diagnostics
     app_config = AppConfig(sandbox=SandboxConfig(use="deerflow.sandbox.local:LocalSandboxProvider"))
 
-    def names(stack):
-        return {type(m.inner if isinstance(m, IsolatedMiddleware) else m).__name__ for m in stack}
+    def ours(stack):
+        unwrapped = (m.inner if isinstance(m, IsolatedMiddleware) else m for m in stack)
+        return [type(m).__name__ for m in unwrapped if type(m).__module__.startswith("deerflow_extension_cad_design")]
 
-    subagent = names(build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded))
-    lead = names(build_middlewares(config={"configurable": {}}, model_name="gpt-4o", app_config=app_config, extensions=loaded))
-    assert "DesignMode" in lead
-    assert "DesignMode" not in subagent and "NoDrafting" not in subagent
+    subagent = ours(build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded))
+    lead = ours(build_middlewares(config={"configurable": {}}, model_name="gpt-4o", app_config=app_config, extensions=loaded))
+    assert lead == ["DesignMode"]
+    assert subagent == []
 
 
 def test_the_migration_delivers_the_shipped_record():

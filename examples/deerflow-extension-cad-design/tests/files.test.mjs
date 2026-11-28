@@ -271,6 +271,18 @@ test("the print summary carries the problems and the slicer's numbers", () => {
   assert.equal(printSummary([]), null);
 });
 
+test("names the host's threadFiles would refuse are left out of a listing", () => {
+  // services.ts checkThreadFile refuses these characters and dot segments; a
+  // name kept here must be one the host builds a URL for, or the Views and
+  // Files tabs would throw while the version renders.
+  const names = ["a\u007f.png", "b\u0001.png", "c\u001f.png", ".", "..", ""];
+  const kept = filesByName(
+    [...names, "shaded.png", ".hidden"].map((n) => entry(n)),
+  );
+  assert.deepEqual([...kept.keys()], ["shaded.png", ".hidden"]);
+  assert.deepEqual(viewImages(kept), ["shaded.png"]);
+});
+
 test("view images are the PNGs, shaded before sections", () => {
   assert.deepEqual(
     viewImages(files("sections.png", "shaded-open.png", "shaded.png", "a.txt")),

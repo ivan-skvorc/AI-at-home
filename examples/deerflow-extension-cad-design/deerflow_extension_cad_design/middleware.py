@@ -4,9 +4,18 @@ A lead-scoped middleware at ``Placement.MODEL_LOGICAL``, outside the context
 guard, which then measures what is really sent. The host forwards only removed
 tools and appended system text from this placement, and this middleware only
 appends: on a design run the brief (notes.py), plus a line telling the model
-to stop when the run has no bash tool and so no container to render in. Every
-other model call, a delegated subagent's included, passes unchanged, so
-ordinary conversations pay 0 tokens for this extension.
+to send the user to the setup and stop when the run cannot render in a
+per-thread CAD container. Every other model call, a delegated subagent's
+included, passes unchanged, so ordinary conversations pay 0 tokens for this
+extension.
+
+A run can render only when the host runs per-thread containers
+(``HostPolicySnapshot.sandbox_container``, the same value ``get_design`` hands
+the page) and the run has a ``bash`` tool. A ``bash`` tool alone is not
+enough: with host bash the model's CAD code would run as a Gateway subprocess,
+and in the AIO provider's external mode every thread shares one container and
+so one design folder. The page shows its setup banner in both, so the brief
+says the same.
 
 A design run is one whose ``plugin_options["cad-design"]`` names a live design
 whose conversation is the run's own thread. The options are client input, so
@@ -44,9 +53,11 @@ def _context(runtime: Any) -> Mapping[str, Any]:
 
 
 class DesignMode(AgentMiddleware):
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, *, container: bool = False):
         super().__init__()
         self.store = store
+        #: Whether the host runs per-thread containers; read from the build's host policy.
+        self.container = container
 
     def design_run(self, runtime: Any) -> dict[str, Any] | None:
         """The design on a design run, else None. Touches the store only when flagged."""
@@ -60,7 +71,7 @@ class DesignMode(AgentMiddleware):
     def notes(self, request: Any) -> list[str]:
         if self.design_run(request.runtime) is None:
             return []
-        if any(tool_name(tool) == BASH_TOOL for tool in request.tools):
+        if self.container and any(tool_name(tool) == BASH_TOOL for tool in request.tools):
             return [DESIGN_BRIEF]
         return [DESIGN_BRIEF, NO_CONTAINER]
 
@@ -98,4 +109,7 @@ class Contributor:
     def contribute_middlewares(self, app_store, context):
         if context.scope != AgentScope.LEAD:
             return ()
-        return (MiddlewarePlacement(DesignMode(self.store), Placement.MODEL_LOGICAL, AgentScope.LEAD),)
+        # The policy is projected from the configuration this agent is built from; a host
+        # older than API 0.2.15 has no such field and reads as having no container.
+        container = getattr(getattr(context, "policy", None), "sandbox_container", False) is True
+        return (MiddlewarePlacement(DesignMode(self.store, container=container), Placement.MODEL_LOGICAL, AgentScope.LEAD),)

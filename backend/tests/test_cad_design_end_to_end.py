@@ -12,9 +12,11 @@ chat model, which records the tools and the system message of every call.
 An owner's design run once missed its brief: the host's isolation wrapper had
 dropped the request the cad-design middleware handed on, and the middleware's
 own tests called it directly, past the wrapper, and passed. The model renders
-in the design thread's container, so the brief also tells it what to do when
-the run has no bash tool; these runs use the host-local provider, which has
-none unless the operator allows host bash.
+in the design thread's per-thread container, so the brief also tells it to send
+the user to the setup when the run has none: no container mode, or no bash
+tool. These runs use the host-local provider, which has no bash tool unless the
+operator allows host bash, and the container case stands in the projected host
+policy for the AIO provider, whose containers a test cannot start.
 """
 
 from __future__ import annotations
@@ -151,8 +153,10 @@ def _reset_singletons(monkeypatch: pytest.MonkeyPatch) -> None:
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """A started Gateway with the shipped plugin records, signed in, and its CSRF token.
 
-    Parametrize it indirectly with True to allow host bash, which puts a ``bash``
-    tool on the lead agent the way the container sandbox does.
+    Parametrize it indirectly with "host-bash" to allow host bash, which puts a
+    ``bash`` tool on the lead agent the way the container sandbox does, or with
+    "container" to also project the host policy of the AIO provider's local
+    container mode (``HostPolicySnapshot.sandbox_container``).
     """
     from starlette.testclient import TestClient
 
@@ -166,7 +170,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fixt
     plugins = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))["plugins"]
     assert {record["name"] for record in plugins} >= {"workflows", "cad-design"}
     config = tmp_path / "config.yaml"
-    sandbox = CONFIG.replace(LOCAL_SANDBOX, LOCAL_SANDBOX + "  allow_host_bash: true\n") + HOST_BASH_TOOL if getattr(request, "param", False) else CONFIG
+    mode = getattr(request, "param", None)
+    sandbox = CONFIG.replace(LOCAL_SANDBOX, LOCAL_SANDBOX + "  allow_host_bash: true\n") + HOST_BASH_TOOL if mode in ("host-bash", "container") else CONFIG
+    if mode == "container":
+        # The lead agent's build and the lifespan's services both read this projection.
+        monkeypatch.setattr("deerflow.extensions.policy._sandbox_container", lambda app_config: True)
     config.write_text(sandbox + yaml.safe_dump({"plugins": plugins}, sort_keys=False), encoding="utf-8")
     monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config))
     extensions = tmp_path / "extensions_config.json"
@@ -258,11 +266,28 @@ def test_a_design_prompt_brings_the_brief_and_without_bash_the_setup_line(client
     assert [(message["role"], message["text"]) for message in messages] == [("user", "A 30 x 20 x 10 mm block with a 5 mm cone on top"), ("assistant", "Done.")]
 
 
-@pytest.mark.parametrize("client", [True], indirect=True, ids=["host-bash"])
-def test_a_design_run_with_a_shell_gets_the_brief_alone(client):
+@pytest.mark.parametrize("client", ["host-bash"], indirect=True)
+def test_host_bash_is_no_cad_container(client):
+    # A bash tool is bound, but the CAD code would run as a Gateway subprocess: the page
+    # shows its setup banner, and the brief tells the model to send the user there too.
     from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
 
     design = _action(client, "create_design", {"title": "Block"})["design"]
+    assert _action(client, "get_design", {"design_id": design["id"]})["container"] is False
+    started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "model_name": MODEL, "mode": "flash"})
+    assert _settle(client, design["id"], started["run_id"]) == "success"
+
+    (call,) = CALLS
+    assert "bash" in call["tools"]
+    assert DESIGN_BRIEF + "\n\n" + NO_CONTAINER in call["system"]
+
+
+@pytest.mark.parametrize("client", ["container"], indirect=True)
+def test_a_design_run_in_container_mode_gets_the_brief_alone(client):
+    from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
+
+    design = _action(client, "create_design", {"title": "Block"})["design"]
+    assert _action(client, "get_design", {"design_id": design["id"]})["container"] is True
     started = _action(client, "prompt", {"design_id": design["id"], "text": "A plate", "model_name": MODEL, "mode": "flash", "viewing": 1, "newest": 2})
     assert _settle(client, design["id"], started["run_id"]) == "success"
 
@@ -305,7 +330,7 @@ def test_an_ordinary_chat_never_receives_the_design_brief(client, forged):
     for call in CALLS:
         assert _plugin_tools(call) == []
         assert "## Design page" not in call["system"]
-        assert "no CAD container" not in call["system"]
+        assert "per-thread CAD container" not in call["system"]
 
 
 def test_the_ultracode_brief_reaches_the_model(client):

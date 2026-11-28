@@ -677,7 +677,7 @@ export function mountPage(root, context) {
     renderRunState();
     renderMessages();
     loadMessages();
-    refresh();
+    refresh().catch(() => {});
     resumeRun();
   }
 
@@ -712,6 +712,19 @@ export function mountPage(root, context) {
     } catch (error) {
       if (error?.status === 404) return null;
       throw error;
+    }
+  }
+
+  /**
+   * A file's URL, or null when the host refuses its path. Names come from
+   * model-run code, so one the host will not link is left out rather than
+   * stopping the rest of the version from showing.
+   */
+  function fileUrl(entry, options) {
+    try {
+      return files.url(S.design.thread_id, entry.path, options);
+    } catch {
+      return null;
     }
   }
 
@@ -756,7 +769,9 @@ export function mountPage(root, context) {
   let refreshAgain = false;
   const scheduleRefresh = (ms = REFRESH_MS) => {
     cancel(refreshTimer);
-    refreshTimer = later(() => refresh(), ms);
+    // A failure must not become an unhandled rejection: the next tool result,
+    // poll or settle lists the folder again.
+    refreshTimer = later(() => refresh().catch(() => {}), ms);
   };
 
   /** List the design folder and show the chosen version; one listing at a time. */
@@ -1005,7 +1020,8 @@ export function mountPage(root, context) {
     const grid = element("div", "gallery");
     for (const name of names) {
       const entry = loaded.viewFiles.get(name);
-      const url = files.url(S.design.thread_id, entry.path);
+      const url = fileUrl(entry);
+      if (!url) continue;
       // A rewritten image (views run again) has a new time: the browser fetches it anew.
       const src = `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(entry.modified_at ?? "")}`;
       const figure = element("figure");
@@ -1022,7 +1038,9 @@ export function mountPage(root, context) {
       figure.append(link, element("figcaption", "", name));
       grid.append(figure);
     }
-    viewsPanel.append(grid);
+    viewsPanel.append(
+      grid.childElementCount ? grid : element("p", "muted pad", text.noViews),
+    );
   }
 
   function section(heading) {
@@ -1185,17 +1203,19 @@ export function mountPage(root, context) {
     for (const [prefix, group] of groups)
       for (const name of [...group.keys()].sort()) {
         const entry = group.get(name);
+        const href = fileUrl(entry, { download: true });
+        if (!href) continue;
         const li = element("li");
         const link = element("a", "", `${prefix}${name}`);
-        link.href = files.url(S.design.thread_id, entry.path, {
-          download: true,
-        });
+        link.href = href;
         link.download = name;
         link.setAttribute("aria-label", text.download(`${prefix}${name}`));
         li.append(link, element("span", "muted", bytes(entry.size)));
         ul.append(li);
       }
-    filesPanel.append(ul);
+    filesPanel.append(
+      ul.childElementCount ? ul : element("p", "muted pad", text.noFiles),
+    );
   }
 
   // -- conversation ---------------------------------------------------------------------------
@@ -1474,8 +1494,13 @@ export function mountPage(root, context) {
     cancel(refreshTimer);
     renderRunState();
     settling = run;
-    await refresh();
-    settling = null;
+    try {
+      await refresh();
+    } catch {
+      // The history below is reloaded even when the last version could not be shown.
+    } finally {
+      settling = null;
+    }
     if (S.design?.id !== run.designId) return;
     if (run.state.error)
       setNotice(

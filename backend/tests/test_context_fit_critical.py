@@ -268,8 +268,8 @@ def _cad_design_additions():
     """The CAD design page's lead middleware, taken from the extension itself.
 
     It contributes no model tool. On a design run it appends the design brief to
-    the system message, and one more line when the run has no bash tool; every
-    other model call passes unchanged (FORK.md §58).
+    the system message, and one more line when the run cannot render in a
+    per-thread CAD container; every other model call passes unchanged (FORK.md §58).
     """
     from deerflow_extension_api import AgentBuildContext, AgentScope
     from deerflow_extension_cad_design import install
@@ -327,8 +327,8 @@ def test_the_cad_design_page_adds_nothing_outside_a_design_run(stock_config, mod
 def test_a_cad_design_run_fits_in_every_mode(stock_config, mode):
     # A design run's context comes from the page's prompt action: the mode's flags and the
     # cad-design options, never the workflows options, so the Ultracode brief is not on it.
-    # The stock config has no bash tool (host-local provider), so the setup line rides too:
-    # the longest form of the brief.
+    # The stock config uses the host-local provider, which runs no per-thread container, so
+    # the setup line rides too: the longest form of the brief.
     from deerflow_extension_cad_design.notes import DESIGN_BRIEF, NO_CONTAINER
 
     placed = _cad_design_additions()

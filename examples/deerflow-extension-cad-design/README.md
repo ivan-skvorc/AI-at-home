@@ -11,8 +11,11 @@ images, its checks and its files.
 - **It needs the container sandbox with the CAD image.** Run
   `make sandbox-cad-image`, then `make sandbox-enable MODE=container IMAGE=cad`,
   and restart the Gateway. Until then the page shows those commands, and a
-  design run without a `bash` tool is told to give the user the same commands
-  and stop. Large STEP exports may need `DEER_FLOW_SANDBOX_MEMORY=4g` in the
+  design run is told to give the user the same commands and stop. That holds
+  whenever the host runs no per-thread containers, even with a `bash` tool:
+  host bash would run the CAD code beside the Gateway, and the AIO provider's
+  external mode shares one container, and so one design folder, between every
+  thread. Large STEP exports may need `DEER_FLOW_SANDBOX_MEMORY=4g` in the
   Gateway's environment (the container's cap is 2 GiB).
 - **The Gateway runs no model-written code.** The backend actions store designs
   and start runs; cadkit runs in the design thread's own container.

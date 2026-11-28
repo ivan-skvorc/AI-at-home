@@ -9,7 +9,7 @@ cover the middleware's own logic on a checkout without it.
 from types import SimpleNamespace
 
 import pytest
-from deerflow_extension_api import AgentScope, Placement
+from deerflow_extension_api import AgentBuildContext, AgentScope, HostPolicySnapshot, Placement
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import SystemMessage
 
@@ -54,10 +54,15 @@ async def arun(middleware, req):
     return seen[0]
 
 
-def wrapped(store):
+def lead(container):
+    """The build context of a lead agent on a host with or without per-thread containers."""
+    return AgentBuildContext(scope=AgentScope.LEAD, policy=HostPolicySnapshot(sandbox_container=container))
+
+
+def wrapped(store, container=True):
     """DesignMode as the host injects it."""
     injection = pytest.importorskip("deerflow.extensions.injection")
-    (placed,) = Contributor(store).contribute_middlewares(None, SimpleNamespace(scope=AgentScope.LEAD))
+    (placed,) = Contributor(store).contribute_middlewares(None, lead(container))
     diagnostics = []
     return injection.isolate(placed, "cad-design", diagnostics.append), diagnostics
 
@@ -75,7 +80,7 @@ ORDINARY = [
 
 @pytest.mark.parametrize("context", ORDINARY)
 async def test_without_a_design_run_nothing_changes(store, context):
-    middleware = DesignMode(store)
+    middleware = DesignMode(store, container=True)
     for sent in (run(middleware, request(context)), await arun(middleware, request(context))):
         assert sent.tools == [OTHER_TOOL, BASH]
         assert sent.system_message.content == "BASE"
@@ -97,14 +102,15 @@ def test_no_flag_never_touches_the_store(tmp_path):
 
 
 async def test_a_design_run_gets_the_brief_and_keeps_its_tools(store):
-    for sent in (run(DesignMode(store), request(flagged())), await arun(DesignMode(store), request(flagged()))):
+    middleware = DesignMode(store, container=True)
+    for sent in (run(middleware, request(flagged())), await arun(middleware, request(flagged()))):
         assert sent.tools == [OTHER_TOOL, BASH]
         assert sent.system_message.content == "BASE\n\n" + DESIGN_BRIEF
         assert sent.system_message.id == "sys"
 
 
 def test_through_the_host_wrapper_the_brief_reaches_the_model(store):
-    middleware, diagnostics = wrapped(store)
+    middleware, diagnostics = wrapped(store, container=True)
     sent = run(middleware, request(flagged()))
     assert sent.system_message.content == "BASE\n\n" + DESIGN_BRIEF and sent.tools == [OTHER_TOOL, BASH]
     sent = run(middleware, request(flagged(), tools=(OTHER_TOOL,)))
@@ -112,14 +118,24 @@ def test_through_the_host_wrapper_the_brief_reaches_the_model(store):
     assert not diagnostics
 
 
+def test_through_the_host_wrapper_a_shell_without_container_mode_gets_the_setup_line(store):
+    # Host bash or the AIO provider's shared external container: a bash tool is bound, but
+    # the CAD code would run beside the Gateway or in a folder every thread shares, and the
+    # page shows its setup banner. The brief must say the same.
+    middleware, diagnostics = wrapped(store, container=False)
+    sent = run(middleware, request(flagged()))
+    assert sent.system_message.content == "BASE\n\n" + DESIGN_BRIEF + "\n\n" + NO_CONTAINER
+    assert sent.tools == [OTHER_TOOL, BASH] and not diagnostics
+
+
 async def test_without_bash_the_model_is_told_to_send_the_user_to_the_setup(store):
-    sent = await arun(DesignMode(store), request(flagged(), tools=(OTHER_TOOL,)))
+    sent = await arun(DesignMode(store, container=True), request(flagged(), tools=(OTHER_TOOL,)))
     assert sent.tools == [OTHER_TOOL]
     assert sent.system_message.content.endswith(NO_CONTAINER)
     for command in ("make sandbox-cad-image", "make sandbox-enable MODE=container IMAGE=cad", "restart the Gateway"):
         assert command in NO_CONTAINER
     # A tool object (not a schema dict) named bash counts too.
-    sent = await arun(DesignMode(store), request(flagged(), tools=(SimpleNamespace(name="bash"),)))
+    sent = await arun(DesignMode(store, container=True), request(flagged(), tools=(SimpleNamespace(name="bash"),)))
     assert NO_CONTAINER not in sent.system_message.content
 
 
@@ -132,12 +148,25 @@ def test_the_brief_names_the_fixed_paths_and_stays_short():
 
 def test_a_trashed_design_gets_no_brief(store):
     store.delete("alice", DESIGN)
-    assert run(DesignMode(store), request(flagged())).system_message.content == "BASE"
+    assert run(DesignMode(store, container=True), request(flagged())).system_message.content == "BASE"
 
 
 def test_the_contributor_is_lead_only(store):
-    placed = Contributor(store).contribute_middlewares(None, SimpleNamespace(scope=AgentScope.LEAD))
+    placed = Contributor(store).contribute_middlewares(None, lead(True))
     assert len(placed) == 1 and placed[0].placement == Placement.MODEL_LOGICAL
     assert placed[0].scope == AgentScope.LEAD and isinstance(placed[0].middleware, DesignMode)
     # The brief is the lead's: a delegated subagent works from the task the lead writes it.
     assert Contributor(store).contribute_middlewares(None, SimpleNamespace(scope=AgentScope.SUBAGENT)) == ()
+
+
+def test_the_contributor_reads_container_mode_from_the_build_policy(store):
+    def container(context):
+        (placed,) = Contributor(store).contribute_middlewares(None, context)
+        return placed.middleware.container
+
+    assert container(lead(True)) is True
+    assert container(lead(False)) is False
+    # The default policy, and a host older than API 0.2.15 whose policy lacks the field.
+    assert container(AgentBuildContext(scope=AgentScope.LEAD)) is False
+    assert container(SimpleNamespace(scope=AgentScope.LEAD, policy=SimpleNamespace())) is False
+    assert container(SimpleNamespace(scope=AgentScope.LEAD)) is False

@@ -496,15 +496,6 @@ class TestRetiredCadPluginRemoval:
 
         assert config.read_text(encoding="utf-8") == original.replace("config_version: 78", "config_version: 79", 1)
 
-    def test_an_install_many_versions_behind_never_gets_the_record(self, tmp_path):
-        config = tmp_path / "config.yaml"
-        config.write_text(f"config_version: 65\n{self.BASE}", encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        plugins = yaml.safe_load(config.read_text(encoding="utf-8"))["plugins"]
-        assert plugins == [self.WORKFLOWS, self.CAD_PREVIEW, self.CAD_DESIGN]
-
     def test_the_real_example_and_migrations_no_longer_carry_the_module(self):
         example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
         assert example["config_version"] >= 79

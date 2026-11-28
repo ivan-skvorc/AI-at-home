@@ -2,8 +2,9 @@
 # Smoke test of the CAD sandbox image (FORK.md §58).
 #
 # Runs the cad-modeling skill's cadkit.py through its whole loop (render, check,
-# views, print --slice, export --step --3mf) on a small two-body model inside
-# the image, the way the agent runs it in a per-thread container: the repo's
+# views, print --slice, export --step --3mf, testpiece, guide, export --zip,
+# study, compare) on a small two-body model inside the image, the way the agent
+# runs it in a per-thread container: the repo's
 # skills mounted read-only at /mnt/skills, a scratch directory at
 # /mnt/user-data, the shell as uid 1000 without capabilities, and the default
 # sandbox memory cap. It fails on any exit status the step does not expect, and
@@ -97,6 +98,11 @@ JSON
 cat > "$work/workspace/clash.json" <<'JSON'
 {"poses": [{"name": "pushed through", "place": {"pin": [{"translate": [0, 0, -2]}]}}], "ignore": [], "tolerance_mm3": 0.01}
 JSON
+cat > "$work/workspace/steps.md" <<'STEPS'
+1. Lay the plate flat.
+
+2. Drop the pin through the hole, head up. It should turn freely.
+STEPS
 chmod 0666 "$work"/workspace/*
 
 failures=0
@@ -127,19 +133,45 @@ run_step 1 "check a pose that clashes" check "$design" --poses clash.json
 run_step 0 "views" views "$design" --sections z=2.5,x=20
 run_step 0 "print --slice" print "$design" --slice
 run_step 0 "export --step --3mf" export "$design" --step --3mf
+# The pin and the plate around its hole, to print the fit first.
+run_step 0 "testpiece" testpiece "$design" --box 12,7,0,28,23,8
+run_step 0 "guide" guide "$design" --steps steps.md
+# Reads every STL, STEP and the 3MF back, then packs them with the guide and the test pieces.
+run_step 0 "export --zip" export "$design" --zip
+run_step 0 "study two values" study model.scad --design "$design" --param gap=0.5,0.4 --poses poses.json
+run_step 0 "compare an STL with its STEP" compare "$design/v1/pin.stl" "$design/v1/pin.step"
+run_step 1 "compare two different bodies" compare "$design/v1/pin.stl" "$design/v1/plate.step"
 run_step 2 "render a missing file" render missing.scad --design "$design"
 
 version="$work/outputs/design/v1"
 for file in model.scad plate.stl pin.stl assembly.glb report.json check.json \
   views/shaded.png views/sections.png plate.step pin.step bodies.3mf \
-  print/plate.stl print/pin.stl print/report.json print/print.json print/print.gcode; do
+  print/plate.stl print/pin.stl print/report.json print/print.json print/print.gcode \
+  test/plate.stl test/pin.stl test/test.json test/report.json guide.pdf export.json \
+  design-v1.zip pin.compare.json plate.compare.json \
+  ../studies/gap/0.5/plate.stl ../studies/gap/0.4/pin.stl ../studies/gap/study.json ../studies/gap/compare.png; do
   if [[ ! -s "$version/$file" ]]; then
     echo "FAIL: v1/$file is missing or empty" >&2
     failures=$((failures + 1))
   fi
 done
-if [[ -e "$work/outputs/design/v2" ]]; then
-  echo "FAIL: a failed render made a version folder (v2)" >&2
+# A study and a failed render make no version folder.
+if [[ "$(ls "$work/outputs/design" | tr '\n' ' ')" != "studies v1 " ]]; then
+  echo "FAIL: the design folder holds $(ls "$work/outputs/design" | tr '\n' ' '), not just studies and v1" >&2
+  failures=$((failures + 1))
+fi
+# The zip holds the delivery, named relative to the version folder, and its manifest.
+if ! docker run --rm --network none --user 1000:1000 -v "$work:/mnt/user-data:ro" --entrypoint python3 "$image" -c '
+import json, sys, zipfile
+archive = zipfile.ZipFile("/mnt/user-data/outputs/design/v1/design-v1.zip")
+names = set(archive.namelist())
+missing = {"print/plate.stl", "print/pin.stl", "plate.step", "bodies.3mf", "model.scad", "guide.pdf", "test/pin.stl", "manifest.json"} - names
+manifest = json.loads(archive.read("manifest.json"))
+assert not missing, f"missing {sorted(missing)}"
+assert {item["path"] for item in manifest["files"]} | {"manifest.json"} == names, "the manifest does not list the zip"
+assert manifest["checks"]["export"]["mismatches"] == 0 and manifest["print"]["filament_g"], manifest["checks"]
+'; then
+  echo "FAIL: design-v1.zip does not hold the delivery" >&2
   failures=$((failures + 1))
 fi
 

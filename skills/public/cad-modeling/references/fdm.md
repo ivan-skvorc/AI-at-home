@@ -8,6 +8,11 @@ overhangs, 0.8 mm walls, a 250 x 210 x 220 mm bed. When the user names another
 printer or value, pass it (`--bed`, `--min-wall`, `--overhang`) and use it here.
 Do not ask the user for printer facts.
 
+When the user names a printer or a filament, look up its maker's published
+tolerances and settings (`web_search`, then `web_fetch` the maker's page, such
+as help.prusa3d.com for a Prusa printer) and cite the page beside each value
+you take from it. Otherwise use this page's defaults and say so.
+
 ## Orientation
 
 Choose the print layout for a large flat face down, round holes along z, few
@@ -96,3 +101,7 @@ its own small design:
 
 Use the variant that fit in the real part, and tell the user its value so
 later parts start from it.
+
+When the fit sits inside the real part (a hinge knuckle, a snap, a slide), cut
+that joint out of the real bodies with `cadkit.py testpiece` instead: the user
+prints the pieces in minutes and tries the real joint before the long print.

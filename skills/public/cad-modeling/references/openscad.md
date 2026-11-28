@@ -63,6 +63,11 @@ if (part == "strut" || part == "all") place("strut") strut();
 - **Slow operations.** `minkowski`, `hull` of many parts and a high `$fn` on
   many small cylinders make CGAL renders take minutes. Prefer `offset` on 2D
   shapes and `linear_extrude`; keep `$fn` low until the export.
+- **A slow body that others only cut with or line up against.** Render it
+  once, and have the others `import()` its STL from that version folder, as in
+  `import("/mnt/user-data/outputs/<design>/v3/housing.stl")`, instead of
+  rebuilding it inside each of them. Go back to the module when its sizes
+  change.
 - **2D stays 2D.** A `square` or `circle` left outside an extrude makes the
   body fail to render as a solid.
 - **Lettering.** `text()` works in the image with the DejaVu and Liberation

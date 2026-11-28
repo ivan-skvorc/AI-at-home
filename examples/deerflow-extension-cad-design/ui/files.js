@@ -33,8 +33,12 @@ const MAX_VERSION = 100_000;
 const VERSION = /^v([1-9][0-9]{0,5})$/;
 /** cadkit's body names: letters, digits, '-' or '_', at most 40. */
 const BODY = /^[A-Za-z0-9_-]{1,40}$/;
-/** A file the Files tab may link: one plain name, no path. */
-const FILE = /^[^/\\\u0000-\u001f]{1,255}$/;
+/**
+ * A file the Files tab may link: one plain name, no path, and none of the
+ * characters the host's threadFiles refuses (services.ts checkThreadFile), so
+ * every name kept here is one the host will build a URL for.
+ */
+const FILE = /^(?!\.\.?$)[^/\\\u0000-\u001f\u007f]{1,255}$/;
 
 const record = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);

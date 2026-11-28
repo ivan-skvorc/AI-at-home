@@ -19,8 +19,13 @@ Follow the cad-modeling skill (read /mnt/skills/public/cad-modeling/SKILL.md fir
 - Before you change anything, read the newest version's report.json.
 End each turn with what changed, which checks pass and what is left."""
 
-#: Added when the run has no bash tool: the page cannot work, and the model must not pretend it does.
-NO_CONTAINER = "This server has no CAD container (no bash tool). Tell the user that the Designs page needs it: `make sandbox-cad-image`, then `make sandbox-enable MODE=container IMAGE=cad`, then restart the Gateway. Then stop."
+#: Added when the run cannot render in a per-thread CAD container (no container mode, or
+#: no bash tool): the page cannot work, and the model must not pretend it does or run the
+#: CAD code anywhere else.
+NO_CONTAINER = (
+    "This server runs no per-thread CAD container for this conversation, and the Designs page needs one, so run no CAD code. "
+    "Tell the user to set it up: `make sandbox-cad-image`, then `make sandbox-enable MODE=container IMAGE=cad`, then restart the Gateway. Then stop."
+)
 
 #: Appended to the user's message when the page shows an older version than the newest.
 VIEWING_SUFFIX = "\n\n[Designs page: the user is looking at v{seq} ({folder}/v{seq}), not the newest version.]"

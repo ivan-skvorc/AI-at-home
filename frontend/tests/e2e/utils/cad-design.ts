@@ -142,6 +142,11 @@ export class DesignBackend {
   container = true;
   /** False: the next prompt answers in text and makes no version. */
   render = true;
+  /**
+   * True: run_status keeps answering "running" after the joined stream has
+   * ended, so the page is still following the run until the test sets it back.
+   */
+  holdRun = false;
 
   /** A design with `versions` rendered folders already in its thread. */
   async seed(title: string, versions = 1) {
@@ -309,6 +314,7 @@ export class DesignBackend {
       }
       case "run_status": {
         const design = this.design(payload);
+        if (this.holdRun) return { status: "running" };
         if (design.run_id === payload.run_id) design.run_id = null;
         return { status: "success" };
       }

@@ -155,7 +155,7 @@ def _flags(text: str) -> list[str]:
 
 def test_every_quoted_command_and_flag_is_one_cadkit_takes():
     quoted = _quoted_commands()
-    assert {command for _, command, _ in quoted} == set(COMMANDS) == {"render", "check", "views", "print", "export"}
+    assert {command for _, command, _ in quoted} == set(COMMANDS) == {"render", "check", "views", "print", "export", "guide", "study", "testpiece", "compare"}
     for where, command, rest in quoted:
         assert command in COMMANDS, f"{where}: cadkit.py {command}"
         for flag in _flags(rest):
@@ -189,7 +189,8 @@ def test_the_skill_runs_each_command_on_the_design_folder_and_cadkit_parses_it(n
     # The design page lists these folders; a render anywhere else is invisible to it.
     assert "/mnt/user-data/outputs/<design>/v<N>/" in skill and "/mnt/user-data/workspace/<design>/model.scad" in skill
     lines = _skill_command_lines()
-    assert [argv[0] for argv in lines] == ["render", "check", "views", "print", "export"]
+    # The guide goes first so the zip that export packs holds it.
+    assert [argv[0] for argv in lines] == ["render", "check", "views", "print", "guide", "export"]
     for argv in lines:
         try:
             args = PARSER.parse_args(argv)
@@ -198,6 +199,24 @@ def test_the_skill_runs_each_command_on_the_design_folder_and_cadkit_parses_it(n
         assert (args.design if args.command == "render" else args.path) == "/mnt/user-data/outputs/<design>"
         if getattr(args, "sections", None):
             assert cadkit._parse_sections(args.sections, {})
+    export = PARSER.parse_args(lines[-1])
+    assert export.step and export.threemf and export.zip
+
+
+def test_the_commands_the_skill_names_in_its_prose_parse_on_the_design_folder(numpy_only):
+    """study, testpiece and compare appear in sentences, not code blocks; each still parses as written."""
+    flat = " ".join(_read(SKILL / "SKILL.md").split())
+    quoted = {match.group(1): match.group(0) for match in re.finditer(r"`cadkit\.py (study|testpiece|compare) ([^`]+)`", flat)}
+    assert set(quoted) == {"study", "testpiece", "compare"}
+    study = PARSER.parse_args(shlex.split(quoted["study"].strip("`").split("cadkit.py", 1)[1]))
+    assert study.design == "/mnt/user-data/outputs/<design>" and cadkit._parse_param(study.param, study.define)[0] == "r"
+    testpiece = PARSER.parse_args(shlex.split(quoted["testpiece"].strip("`").split("cadkit.py", 1)[1]))
+    assert testpiece.path == "/mnt/user-data/outputs/<design>" and testpiece.box == "x0,y0,z0,x1,y1,z1"
+    compare = PARSER.parse_args(shlex.split(quoted["compare"].strip("`").split("cadkit.py", 1)[1]))
+    # The editable STEP is named so that export finds its compare result and zips it.
+    assert (compare.a, compare.b) == ("<body>.stl", "<body>-cq.step")
+    assert "v<N>/<body>-cq.step" in flat and '"<body>-cq.compare.json"' not in flat
+    assert 'f"{body}-cq.compare.json"' in _read(CADKIT) and 'f"{b_path.stem}.compare.json"' in _read(CADKIT)
 
 
 def test_the_skill_states_the_exit_codes_cadkit_returns():
@@ -259,6 +278,18 @@ QUOTED = [
     "may fuse",
     "slicer:",
     "slicer says:",
+    "read back as written",
+    "zip not written",
+    "left out of the zip",
+    "passes:",
+    "no value passes",
+    "assigns no",
+    "left out, the box misses them",
+    "holds nothing of",
+    "volume differs by",
+    "bounding boxes by at most",
+    "symmetric difference",
+    "largest surface deviation",
 ]
 
 
