@@ -91,6 +91,28 @@ describe("every model-selection site goes through the shared picker", () => {
     expect(read(file)).toContain("ModelSelect");
   });
 
+  // The pickers that own their trigger markup: the composer's (also mounted on
+  // plugin pages through `SurfaceContext.composerControls`) and Side Chat's.
+  const COMPOSER_PICKER_SITES = [
+    "src/components/workspace/composer-run-controls.tsx",
+    "src/components/workspace/sidecar/sidecar-panel.tsx",
+  ];
+  it.each(COMPOSER_PICKER_SITES)(
+    "%s drives ModelPickerControls and ModelPickerList",
+    (file) => {
+      const source = read(file);
+      expect(source).toContain("<ModelPickerControls");
+      expect(source).toContain("<ModelPickerList");
+    },
+  );
+  it.each([
+    "src/components/workspace/input-box.tsx",
+    // Plugin pages (the Designs page): the composer's controls, not a <select>.
+    "src/components/workspace/plugin-composer-controls.tsx",
+  ])("%s renders the composer's picker", (file) => {
+    expect(read(file)).toContain("<ComposerModelPicker");
+  });
+
   it("every picker renders its rows through the shared row component", () => {
     // The row layout — provider first, price pinned to the right edge, weights
     // and window on the second line — is the same silent-drift risk as the flat

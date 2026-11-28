@@ -1,6 +1,8 @@
 import type {
   PluginSurface,
   RunStreamEvent,
+  SurfaceComposerControlsHandle,
+  SurfaceComposerControlsOptions,
   SurfaceContext,
   SurfaceThreadFileEntry,
 } from "./contracts";
@@ -21,13 +23,28 @@ export type HostThreadFiles = {
   url: (threadId: string, virtualPath: string, download?: boolean) => string;
 };
 
+/** The host side of `composerControls`; the page wrapper owns lifetime and errors. */
+export type HostComposerControls = {
+  mount: (
+    element: HTMLElement,
+    options: {
+      storageKey?: unknown;
+      onChange?: SurfaceComposerControlsOptions["onChange"];
+    },
+  ) => SurfaceComposerControlsHandle;
+};
+
 /** Shadow DOM scopes styles, not privileges: packages are administrator-trusted code. */
 export function mountSurface(
   container: HTMLElement,
   surface: PluginSurface,
   context: Omit<
     SurfaceContext,
-    "signal" | "openConversation" | "joinRunStream" | "threadFiles"
+    | "signal"
+    | "openConversation"
+    | "joinRunStream"
+    | "threadFiles"
+    | "composerControls"
   > & {
     openConversation?: (threadId: string, signal: AbortSignal) => Promise<void>;
     joinRunStream?: (
@@ -36,6 +53,7 @@ export function mountSurface(
       signal: AbortSignal,
     ) => AsyncIterable<RunStreamEvent>;
     threadFiles?: HostThreadFiles;
+    composerControls?: HostComposerControls;
   },
   onError: () => void,
 ) {
@@ -43,6 +61,9 @@ export function mountSurface(
   const bound = (signal?: AbortSignal) =>
     signal ? AbortSignal.any([abort.signal, signal]) : abort.signal;
   const files = context.threadFiles;
+  const controls = context.composerControls;
+  // Every mounted set of composer controls ends with the page, disposed or not.
+  const mountedControls = new Set<() => void>();
   const shadow =
     container.shadowRoot ?? container.attachShadow({ mode: "open" });
   const root = document.createElement("div");
@@ -58,6 +79,7 @@ export function mountSurface(
     } catch {
       /* Contain plugin cleanup failures. */
     }
+    for (const dispose of [...mountedControls]) dispose();
     root.remove();
   };
   try {
@@ -120,6 +142,43 @@ export function mountSurface(
             },
             url: (threadId, virtualPath, options) =>
               files.url(threadId, virtualPath, options?.download === true),
+          }
+        : undefined,
+      composerControls: controls
+        ? {
+            mount(element, options) {
+              abort.signal.throwIfAborted();
+              if (!(element instanceof HTMLElement))
+                throw new TypeError("composerControls needs an HTMLElement");
+              let disposed = false;
+              const onChange = options?.onChange;
+              const handle = controls.mount(element, {
+                storageKey: options?.storageKey,
+                onChange:
+                  typeof onChange === "function"
+                    ? (runContext) => {
+                        if (disposed || abort.signal.aborted) return;
+                        try {
+                          onChange(runContext);
+                        } catch {
+                          /* A plugin callback cannot break the host controls. */
+                        }
+                      }
+                    : undefined,
+              });
+              const dispose = () => {
+                if (disposed) return;
+                disposed = true;
+                mountedControls.delete(dispose);
+                try {
+                  handle.dispose();
+                } catch {
+                  /* Contain host cleanup failures. */
+                }
+              };
+              mountedControls.add(dispose);
+              return { runContext: () => handle.runContext(), dispose };
+            },
           }
         : undefined,
       async callBackend(action, payload) {

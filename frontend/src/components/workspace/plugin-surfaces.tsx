@@ -29,6 +29,8 @@ import { useModels } from "@/core/models/hooks";
 import { useLocalSettings } from "@/core/settings/hooks";
 import { cn } from "@/lib/utils";
 
+import { usePluginComposerControls } from "./plugin-composer-controls";
+
 function Surface({
   entry,
   surface,
@@ -53,6 +55,13 @@ function Surface({
     models,
     localSettings.context.model_name,
   );
+  const composer = usePluginComposerControls({
+    owner: user?.id ?? "",
+    namespace: entry.namespace,
+    surfaceId: surface.id,
+  });
+  const composerHost = useRef(composer.host);
+  composerHost.current = composer.host;
   const [failed, setFailed] = useState(false);
   const fill = surface.layout === "full";
   useEffect(() => {
@@ -82,6 +91,10 @@ function Surface({
           read: readThreadOutput,
           url: threadOutputURL,
         },
+        composerControls: {
+          mount: (element, options) =>
+            composerHost.current.mount(element, options),
+        },
         models: {
           get list() {
             return currentModels.current.list.map((model) => ({ ...model }));
@@ -110,6 +123,7 @@ function Surface({
     >
       {failed && <p role="alert">{t.extensions.viewFailed}</p>}
       <div ref={ref} className={cn(fill && "min-h-0 flex-1")} />
+      {composer.portals}
     </section>
   );
 }

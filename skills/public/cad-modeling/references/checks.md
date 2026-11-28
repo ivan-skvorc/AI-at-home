@@ -86,10 +86,11 @@ cadkit's answers means.
 `export`
 
 - `read back as written`: each file was read again and matched its body:
-  every STL its report.json; each STEP re-imported as one solid with closed
-  shells, its volume within 0.5% and its bounding box within 0.05 mm of the
-  mesh; `bodies.3mf` one object per body, each with its body's volume.
-  `export.json` holds every result.
+  every STL its report.json; each STEP re-imported as one solid per piece of
+  the body (a cavity stays inside its solid) with closed shells, its volume
+  within 0.5% and its bounding box within 0.05 mm of the mesh; `bodies.3mf`
+  one object per body, each with its body's volume. `export.json` holds every
+  result.
 - `FAIL <file>: ...`: that file does not match the body it came from, so
   `zip not written`, and an earlier zip is removed. Export again; when it
   fails again, the body itself is broken (see `render`).
@@ -98,7 +99,8 @@ cadkit's answers means.
   the JSON results, and `manifest.json`: the bodies, the slicer's settings,
   grams and time, the checks, and each file with its size and sha256.
 - `<body>-cq.step left out of the zip`: an editable STEP joins the zip only
-  after `compare` passed on it in the version folder.
+  after `compare` passed it against that version's `<body>.stl`, and neither
+  file changed since.
 
 `study`
 

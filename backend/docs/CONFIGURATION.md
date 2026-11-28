@@ -1975,7 +1975,7 @@ Nothing publishes the tag, so build it on the host whose Docker daemon runs the 
 
 The 2 GiB default memory cap (`DEER_FLOW_SANDBOX_MEMORY`, above) suits drafts. A STEP export of a large body can need more; set `DEER_FLOW_SANDBOX_MEMORY=4g` in the Gateway's environment.
 
-`docker/sandbox-cad/smoke.sh [IMAGE] [REPO_ROOT]` runs `cadkit.py` through its whole loop (render, check, views, print with the slicer, STEP and 3MF export) on a two-body model inside the image, as uid 1000 without capabilities, under the default memory cap and with no network. The `sandbox-cad-image` workflow builds the image and runs it whenever the image, the skill or `scripts/sandbox_toggle.py` changes.
+`docker/sandbox-cad/smoke.sh [IMAGE] [REPO_ROOT]` runs `cadkit.py` through its whole loop (render, check, views, print with the slicer, STEP and 3MF export read back, a test piece, the guide PDF, the delivery zip, a two-value study and compare) on a two-body model inside the image, as uid 1000 without capabilities, under the default memory cap and with no network. The `sandbox-cad-image` workflow builds the image and runs it whenever the image, the skill or `scripts/sandbox_toggle.py` changes.
 
 In provisioner mode, sandbox Pods are created by the provisioner service, so configure the provisioner `SANDBOX_IMAGE` environment variable instead of `sandbox.image`. See the [Provisioner Setup Guide](../../docker/provisioner/README.md#custom-sandbox-image).
 

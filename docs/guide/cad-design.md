@@ -67,9 +67,11 @@ running container whatever its image.
 4. **Talk about an older version.** Pick it in the version list and write; your
    message tells the assistant which version you are looking at. The next render
    is still the next number: versions are a history, not branches.
-5. **Get the files.** Ask for them, or say you are happy: the assistant exports
-   STEP and 3MF into the version and presents the files. The print-layout STLs
-   are there from the first render.
+5. **Get the files.** Ask for them, or say you are happy: the assistant writes
+   `guide.pdf` (a print and assembly guide), exports STEP and 3MF into the
+   version, reads every file back against its body, and packs them into
+   `design-v<N>.zip` with a manifest. The print-layout STLs are there from the
+   first render.
 
 At 768 px and narrower the page becomes tabs, with the conversation as one of
 them.
@@ -89,7 +91,15 @@ in place, and every render writes the next folder, `design/v<N>/`:
 | `check.json` | The clash and gap check across poses and sweeps |
 | `views/shaded*.png`, `views/sections*.png` | The shaded render and the cross-sections |
 | `print/` | Every body laid flat for printing: its STLs, `report.json`, `print.json` and the slicer's `print.gcode` |
-| `<body>.step`, `bodies.3mf` | Written on export: one STEP per body and a 3MF of the bodies |
+| `<body>.step`, `bodies.3mf` | Written on export and read back: one STEP per body and a 3MF of the bodies |
+| `export.json` | What export read back: each STL, STEP and the 3MF against the body it came from |
+| `guide.pdf` | The print and assembly guide: parts, a page per body, the assembly steps, the checks |
+| `design-v<N>.zip` | The delivery: print-layout STLs, 3MF, STEP, `model.scad`, the guide, the views, the results and `manifest.json` with each file's size and sha256 |
+| `test/` | Test pieces: the bodies cut by a box around one joint, to print first, with `test.json` |
+| `<body>-cq.step` | An editable STEP rebuilt in CadQuery, with `<body>-cq.compare.json` proving it matches the body |
+
+Dimension studies go to `design/studies/<name>/<value>/`, outside the versions,
+so the version list stays one entry per render.
 
 The page reads these files through the host's thread file routes, which serve
 only the design owner's own outputs and work while a run is still going.
@@ -111,16 +121,24 @@ Every check runs on the model in the container; none of them is a print.
   for grams and time. The slicer's own warnings count as problems.
 - **Strength**: worked out by hand in the reply, from the loads you gave, with
   the arithmetic and a safety factor; it is not a file and not a simulation.
+- **Export**: every STEP, the 3MF and every STL are read back and compared with
+  the body they came from (volume within 0.5%, bounding box within 0.05 mm); a
+  mismatch fails the export and no zip is written.
 
 ## Limits
 
 - **Every result is a check on the model.** Real strength, the fit to a real
   object and how your printer handles a bridge are not checked. Tell the
   assistant how a print came out; it changes the clearance or the feature.
-- **The STEP is faceted.** It is written from the mesh through CadQuery's
-  kernel, each triangle a face: good for checking a fit in a CAD program, not
-  for editing features. A body over 60,000 triangles is refused for STEP until
-  it is rendered with a lower `$fn`.
+- **The STEP is faceted** unless the assistant rebuilt the body in CadQuery.
+  The export STEP is written from the mesh through CadQuery's kernel, each
+  triangle a face: good for checking a fit in a CAD program, not for editing
+  features. A body over 60,000 triangles is refused for STEP until it is
+  rendered with a lower `$fn`. Ask for an editable STEP and the assistant
+  rebuilds the body in CadQuery as `<body>-cq.step` and proves it against the
+  OpenSCAD body with `cadkit.py compare` (symmetric difference under 1% of the
+  volume); round features differ by about 0.3% at `$fn = 48`, because
+  OpenSCAD's circles are polygons.
 - **OpenSCAD 2021.01 is slow on curves.** The version in the image's Ubuntu
   release renders booleans with CGAL, without the newer Manifold backend, so a
   body with many curved cuts, `minkowski` or a large `hull` can take minutes. A

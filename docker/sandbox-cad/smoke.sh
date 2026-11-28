@@ -3,8 +3,9 @@
 #
 # Runs the cad-modeling skill's cadkit.py through its whole loop (render, check,
 # views, print --slice, export --step --3mf, testpiece, guide, export --zip,
-# study, compare) on a small two-body model inside the image, the way the agent
-# runs it in a per-thread container: the repo's
+# study, compare) on a small two-body model, and export on bodies made of
+# several shells, inside the image, the way the agent runs it in a per-thread
+# container: the repo's
 # skills mounted read-only at /mnt/skills, a scratch directory at
 # /mnt/user-data, the shell as uid 1000 without capabilities, and the default
 # sandbox memory cap. It fails on any exit status the step does not expect, and
@@ -98,6 +99,14 @@ JSON
 cat > "$work/workspace/clash.json" <<'JSON'
 {"poses": [{"name": "pushed through", "place": {"pin": [{"translate": [0, 0, -2]}]}}], "ignore": [], "tolerance_mm3": 0.01}
 JSON
+# Bodies whose STEP is more than one shell: two loose cubes, and a cube held in
+# a closed cavity, which must stay a solid of its own rather than a second void.
+cat > "$work/workspace/pieces.scad" <<'SCAD'
+part = "all";
+BODIES = ["pair", "captive"];
+if (part == "pair" || part == "all") { cube(5); translate([10, 0, 0]) cube(5); }
+if (part == "captive" || part == "all") translate([20, 0, 0]) { difference() { cube(12); translate([2, 2, 2]) cube(8); } translate([4, 4, 4]) cube(4); }
+SCAD
 cat > "$work/workspace/steps.md" <<'STEPS'
 1. Lay the plate flat.
 
@@ -142,6 +151,8 @@ run_step 0 "study two values" study model.scad --design "$design" --param gap=0.
 run_step 0 "compare an STL with its STEP" compare "$design/v1/pin.stl" "$design/v1/pin.step"
 run_step 1 "compare two different bodies" compare "$design/v1/pin.stl" "$design/v1/plate.step"
 run_step 2 "render a missing file" render missing.scad --design "$design"
+run_step 0 "render bodies in pieces" render pieces.scad --design /mnt/user-data/outputs/pieces
+run_step 0 "export bodies in pieces" export /mnt/user-data/outputs/pieces --step --3mf --zip
 
 version="$work/outputs/design/v1"
 for file in model.scad plate.stl pin.stl assembly.glb report.json check.json \
@@ -149,7 +160,8 @@ for file in model.scad plate.stl pin.stl assembly.glb report.json check.json \
   print/plate.stl print/pin.stl print/report.json print/print.json print/print.gcode \
   test/plate.stl test/pin.stl test/test.json test/report.json guide.pdf export.json \
   design-v1.zip pin.compare.json plate.compare.json \
-  ../studies/gap/0.5/plate.stl ../studies/gap/0.4/pin.stl ../studies/gap/study.json ../studies/gap/compare.png; do
+  ../studies/gap/0.5/plate.stl ../studies/gap/0.4/pin.stl ../studies/gap/study.json ../studies/gap/compare.png \
+  ../../pieces/v1/pair.step ../../pieces/v1/captive.step ../../pieces/v1/pieces-v1.zip; do
   if [[ ! -s "$version/$file" ]]; then
     echo "FAIL: v1/$file is missing or empty" >&2
     failures=$((failures + 1))

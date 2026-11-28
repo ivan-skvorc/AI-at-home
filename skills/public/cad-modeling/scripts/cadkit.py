@@ -1059,34 +1059,85 @@ def cmd_print(args) -> int:
 # ---------------------------------------------------------------- STEP
 
 
+def _nest_shells(volumes: list[float], holds) -> list[list[int]]:
+    """A body's closed shells grouped into solids: each outer shell, then the voids directly inside it.
+
+    `volumes` are the shells' signed volumes (a void's is negative); `holds(outer, void)` says whether that outer
+    shell encloses that void. A void goes to the smallest outer shell that holds it, so a part captive in a cavity
+    is a solid of its own and the cavity stays with the wall around it. A void nothing holds stays alone, and the
+    STEP check then reports the body rather than hiding the fault.
+    """
+    outers = sorted((i for i, v in enumerate(volumes) if v > 0), key=lambda i: volumes[i])
+    groups = {i: [i] for i in outers}
+    alone = []
+    for i, volume in enumerate(volumes):
+        if volume > 0:
+            continue
+        holder = next((o for o in outers if holds(o, i)), None)
+        if holder is None:
+            alone.append([i])
+        else:
+            groups[holder].append(i)
+    return [groups[i] for i in sorted(groups)] + alone
+
+
+def _outer_shells(mesh) -> int:
+    """How many solids a closed mesh is: its shells that enclose material rather than a void."""
+    return sum(1 for shell in mesh.split(only_watertight=False) if shell.volume > 0)
+
+
 def _step(mesh, target: Path) -> None:
     try:
+        from OCP.BRep import BRep_Builder
         from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
         from OCP.IFSelect import IFSelect_RetDone
         from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
         from OCP.StlAPI import StlAPI_Reader
         from OCP.TopAbs import TopAbs_SHELL
         from OCP.TopExp import TopExp_Explorer
-        from OCP.TopoDS import TopoDS, TopoDS_Shape
+        from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shape
     except ImportError as exc:
         raise Unusable(OCP_MISSING) from exc
     scratch = target.with_suffix(".tmp.stl")
-    mesh.export(scratch)
-    shape = TopoDS_Shape()
-    StlAPI_Reader().Read(shape, str(scratch))
-    scratch.unlink()
-    sewing = BRepBuilderAPI_Sewing(1e-4)
-    sewing.Add(shape)
-    sewing.Perform()
-    sewn = sewing.SewedShape()
-    solid_maker = BRepBuilderAPI_MakeSolid()
-    explorer = TopExp_Explorer(sewn, TopAbs_SHELL)
-    shells = 0
-    while explorer.More():
-        solid_maker.Add(TopoDS.Shell_s(explorer.Current()))
-        shells += 1
-        explorer.Next()
-    result = solid_maker.Solid() if shells else sewn
+
+    def sewn(part):
+        part.export(scratch)
+        shape = TopoDS_Shape()
+        StlAPI_Reader().Read(shape, str(scratch))
+        scratch.unlink()
+        sewing = BRepBuilderAPI_Sewing(1e-4)
+        sewing.Add(shape)
+        sewing.Perform()
+        result = sewing.SewedShape()
+        explorer, shells = TopExp_Explorer(result, TopAbs_SHELL), []
+        while explorer.More():
+            shells.append(TopoDS.Shell_s(explorer.Current()))
+            explorer.Next()
+        return result, shells
+
+    def solid(shells):
+        maker = BRepBuilderAPI_MakeSolid()
+        for shell in shells:
+            maker.Add(shell)
+        return maker.Solid()
+
+    # STEP writes a solid's first shell as its outside and every other shell as a void, so a body in pieces
+    # is one solid per piece, each holding only the voids inside it.
+    parts = mesh.split(only_watertight=False) if mesh.is_volume else []
+    if len(parts) > 1:
+
+        def holds(outer, void):
+            (lo, hi), (vlo, vhi) = parts[outer].bounds, parts[void].bounds
+            return bool((vlo >= lo).all() and (vhi <= hi).all() and parts[outer].contains(parts[void].vertices[:1])[0])
+
+        shells = [sewn(part)[1] for part in parts]
+        result, builder = TopoDS_Compound(), BRep_Builder()
+        builder.MakeCompound(result)
+        for group in _nest_shells([float(part.volume) for part in parts], holds):
+            builder.Add(result, solid([shell for i in group for shell in shells[i]]))
+    else:
+        whole, shells = sewn(mesh)
+        result = solid(shells) if shells else whole
     writer = STEPControl_Writer()
     with _quiet_stdout():
         writer.Transfer(result, STEPControl_AsIs)
@@ -1191,7 +1242,7 @@ def _off_pct(value: float, expected: float) -> float:
 
 
 def _verify_step(path: Path, mesh) -> dict:
-    """Re-import a body's STEP: one solid, closed shells, and the volume and box of the mesh it came from."""
+    """Re-import a body's STEP: a solid per piece of its mesh, closed shells, and the volume and box of the mesh."""
     entry = {"file": path.name, "kind": "STEP", "ok": False, "problems": []}
     problems = entry["problems"]
     shape = _read_step(path)
@@ -1200,13 +1251,14 @@ def _verify_step(path: Path, mesh) -> dict:
         return entry
     facts = _step_facts(shape)
     entry.update({**facts, "volume_mm3": _r(facts["volume_mm3"], 3)})
-    if facts["solids"] != 1:
-        problems.append(f"{facts['solids']} solids where cadkit writes one")
     if facts["open_shells"]:
         problems.append(f"{facts['open_shells']} of {facts['shells']} shells are open")
     if not mesh.is_volume:
         problems.append("its mesh is not a closed solid, so the STEP is not one either")
     else:
+        pieces = entry["mesh_pieces"] = _outer_shells(mesh)
+        if facts["solids"] != pieces:
+            problems.append(f"{facts['solids']} solids where its mesh is {pieces} piece{'' if pieces == 1 else 's'}")
         expected = float(mesh.volume)
         off = _off_pct(facts["volume_mm3"], expected)
         entry.update(mesh_volume_mm3=_r(expected, 3), volume_off_pct=_r(off, 3))
@@ -1287,15 +1339,16 @@ def _verify_stl(path: Path, info: dict, label: str) -> dict:
 
 
 def _proven(version: Path, body: str) -> dict | None:
-    """The passing compare of an editable <body>-cq.step against <body>.stl, made on the file as it is now."""
+    """The passing compare of an editable <body>-cq.step against this version's <body>.stl, both files as they are now."""
     result = _read_json(version / f"{body}-cq.compare.json")
-    step = version / f"{body}-cq.step"
-    if not result or result.get("passed") is not True or not step.is_file():
+    step, stl = version / f"{body}-cq.step", version / f"{body}.stl"
+    if not result or result.get("passed") is not True or not step.is_file() or not stl.is_file():
         return None
-    if Path(str(result.get("a", ""))).name != f"{body}.stl" or Path(str(result.get("b", ""))).name != step.name:
+    # compare records resolved paths: a pass against another version's STL or the print layout's proves nothing here.
+    if Path(str(result.get("a", ""))).resolve() != stl.resolve() or Path(str(result.get("b", ""))).resolve() != step.resolve():
         return None
-    # A STEP edited after its compare is not the one that passed.
-    return result if result.get("b_sha256") == _sha256(step) else None
+    # A file changed after its compare is not the one that passed.
+    return result if result.get("a_sha256") == _sha256(stl) and result.get("b_sha256") == _sha256(step) else None
 
 
 def _zip_candidates(version: Path) -> list[str]:

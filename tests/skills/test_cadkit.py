@@ -387,7 +387,9 @@ def _delivery(tmp_path) -> Path:
     (version / "print" / "report.json").write_text(json.dumps({"version": "v2/print", "bodies": {"base": body, "evil": {"file": "../../../secret.png"}}}))
     for name in ("base.stl", "print/base.stl", "base.step", "base-cq.step", "model.scad", "views/shaded.png", "notes.txt", "stand-v1.zip"):
         (version / name).write_bytes(name.encode() * 3)
-    (version / "base-cq.compare.json").write_text(json.dumps({"passed": True, "b": str(version / "base-cq.step"), "symmetric_difference_pct": 0.2}))
+    digest = {name: hashlib.sha256((version / name).read_bytes()).hexdigest() for name in ("base.stl", "base-cq.step")}
+    proof = {"passed": True, "a": str(version / "base.stl"), "b": str(version / "base-cq.step"), "symmetric_difference_pct": 0.2}
+    (version / "base-cq.compare.json").write_text(json.dumps({**proof, "a_sha256": digest["base.stl"], "b_sha256": digest["base-cq.step"]}))
     (version / "views" / "link.png").symlink_to(tmp_path / "secret.png")
     return version
 
@@ -397,9 +399,35 @@ def test_the_zip_takes_only_deliverables_inside_the_version_folder(tmp_path):
     members = [arcname for _, arcname in cadkit._zip_members(version)]
     # The print layout's STLs before the assembled ones; no link, no ../ name, no notes, no older zip.
     assert members == ["print/base.stl", "base.step", "base-cq.step", "model.scad", "views/shaded.png", "report.json", "print/report.json"]
-    # An editable STEP goes in only on a passing compare.
-    (version / "base-cq.compare.json").write_text(json.dumps({"passed": False, "b": str(version / "base-cq.step")}))
+    # An editable STEP goes in only on a passing compare against this version's body, both files as they are now.
+    proof = json.loads((version / "base-cq.compare.json").read_text())
+    older = version.parent / "v1" / "base.stl"
+    older.parent.mkdir()
+    older.write_bytes(b"the v1 plate, 10 mm shorter")
+    against = {
+        "a failed compare": {"passed": False},
+        "the print layout's STL": {"a": str(version / "print" / "base.stl"), "a_sha256": hashlib.sha256((version / "print" / "base.stl").read_bytes()).hexdigest()},
+        "another version's STL": {"a": str(older), "a_sha256": hashlib.sha256(older.read_bytes()).hexdigest()},
+        "an STL changed since": {"a_sha256": hashlib.sha256(b"before").hexdigest()},
+    }
+    for why, changed in against.items():
+        (version / "base-cq.compare.json").write_text(json.dumps({**proof, **changed}))
+        assert "base-cq.step" not in [arcname for _, arcname in cadkit._zip_members(version)], why
+    (version / "base-cq.compare.json").write_text(json.dumps(proof))
+    assert "base-cq.step" in [arcname for _, arcname in cadkit._zip_members(version)]
+    (version / "base-cq.step").write_bytes(b"edited after its compare")
     assert "base-cq.step" not in [arcname for _, arcname in cadkit._zip_members(version)]
+
+
+def test_a_body_in_pieces_is_a_solid_per_piece_each_with_the_voids_inside_it():
+    # A wall (0) round a cavity (1) round a captive part (2), and a loose piece (3) beside them.
+    volumes = [1728.0, -512.0, 64.0, 125.0]
+    inside = {(0, 1), (0, 2)}
+    assert cadkit._nest_shells(volumes, lambda outer, void: (outer, void) in inside) == [[0, 1], [2], [3]]
+    # A cavity inside the captive part goes to the smallest shell that holds it, not to the wall.
+    assert cadkit._nest_shells([1728.0, -512.0, 64.0, -8.0], lambda outer, void: (outer, void) in {(0, 1), (0, 2), (0, 3), (2, 3)}) == [[0, 1], [2, 3]]
+    # A void that no shell holds stays alone, so the STEP check counts one solid too many.
+    assert cadkit._nest_shells([100.0, -8.0], lambda outer, void: False) == [[0], [1]]
 
 
 def test_the_zip_carries_a_manifest_and_reads_back_against_it(tmp_path):
@@ -690,6 +718,33 @@ def test_export_reads_every_file_back_and_zips_the_delivery(tmp_path, capsys):
     assert code == 1
     assert "FAIL a.step: bounding box 10.500 mm off its mesh's (> 0.05 mm)" in out and "FAIL: 1 file does not read back as written" in out
     assert "zip not written, and the earlier design-v1.zip removed" in out and not (version / "design-v1.zip").exists()
+
+
+# Bodies whose STEP is more than one shell: two loose cubes, a box with a cavity, and a cube held in a cavity.
+PIECES = """
+part = "all";
+BODIES = ["pair", "hollow", "captive"];
+if (part == "pair" || part == "all") { cube(5); translate([10, 0, 0]) cube(5); }
+if (part == "hollow" || part == "all") translate([0, 20, 0]) difference() { cube(10); translate([2, 2, 2]) cube(6); }
+if (part == "captive" || part == "all") translate([20, 20, 0]) { difference() { cube(12); translate([2, 2, 2]) cube(8); } translate([4, 4, 4]) cube(4); }
+"""
+
+
+@needs_cad
+def test_a_body_in_pieces_exports_a_solid_per_piece_and_zips(tmp_path, capsys):
+    pytest.importorskip("OCP")
+    pytest.importorskip("lxml")
+    design, code, out, err = render(capsys, tmp_path, PIECES)
+    assert code == 0, out + err
+    code, out, err = run(capsys, "export", design, "--step", "--3mf", "--zip")
+    assert code == 0, out + err
+    assert "read back as written: pair.stl, hollow.stl, captive.stl, pair.step, hollow.step, captive.step, bodies.3mf, design-v1.zip" in out
+    steps = {v["file"]: v for v in json.loads((design / "v1" / "export.json").read_text())["verified"] if v["kind"] == "STEP"}
+    # The captive cube is a solid of its own, not a second void that would take its volume off the box's.
+    facts = {name: (v["solids"], v["shells"], v["mesh_pieces"], v["volume_mm3"]) for name, v in steps.items()}
+    assert facts == {"pair.step": (2, 2, 2, 250), "hollow.step": (1, 2, 1, 784), "captive.step": (2, 3, 2, 1280)}
+    for name in ("pair", "captive"):
+        assert run(capsys, "compare", design / "v1" / f"{name}.stl", design / "v1" / f"{name}.step")[0] == 0
 
 
 @needs_cad
