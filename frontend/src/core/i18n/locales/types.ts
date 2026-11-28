@@ -160,7 +160,6 @@ export interface Translations {
       | "weknora"
       | "lightrag"
       | "example"
-      | "cad"
       | "cadPreview"
       | "cadDesign",
       {

@@ -16,15 +16,20 @@ import {
 import {
   bindFrontendServices,
   joinRunStream,
+  listThreadOutputs,
   openConversation,
   pluginModelSnapshot,
+  readThreadOutput,
   requestExtensionRoute,
+  threadOutputURL,
 } from "@/core/extensions/services";
 import { mountSurface } from "@/core/extensions/surfaces";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useLocalSettings } from "@/core/settings/hooks";
 import { cn } from "@/lib/utils";
+
+import { usePluginComposerControls } from "./plugin-composer-controls";
 
 function Surface({
   entry,
@@ -50,6 +55,13 @@ function Surface({
     models,
     localSettings.context.model_name,
   );
+  const composer = usePluginComposerControls({
+    owner: user?.id ?? "",
+    namespace: entry.namespace,
+    surfaceId: surface.id,
+  });
+  const composerHost = useRef(composer.host);
+  composerHost.current = composer.host;
   const [failed, setFailed] = useState(false);
   const fill = surface.layout === "full";
   useEffect(() => {
@@ -74,6 +86,15 @@ function Surface({
           openConversation(id, (path) => router.push(path), signal),
         joinRunStream: (threadId, runId, signal) =>
           joinRunStream(threadId, runId, signal),
+        threadFiles: {
+          list: listThreadOutputs,
+          read: readThreadOutput,
+          url: threadOutputURL,
+        },
+        composerControls: {
+          mount: (element, options) =>
+            composerHost.current.mount(element, options),
+        },
         models: {
           get list() {
             return currentModels.current.list.map((model) => ({ ...model }));
@@ -102,6 +123,7 @@ function Surface({
     >
       {failed && <p role="alert">{t.extensions.viewFailed}</p>}
       <div ref={ref} className={cn(fill && "min-h-0 flex-1")} />
+      {composer.portals}
     </section>
   );
 }

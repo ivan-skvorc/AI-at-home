@@ -4,7 +4,7 @@ import { inflateSync } from "node:zlib";
 
 import type { Page } from "@playwright/test";
 
-/** Made by generate-fixtures.py in the CAD venv; see its docstring. */
+/** Frozen files made by the retired CAD module; see the cad-preview README. */
 export const cadFixtures = path.resolve("tests/e2e/fixtures/cad-preview");
 export const cadPackage = path.resolve(
   "../examples/deerflow-extension-cad-preview/deerflow_extension_cad_preview",

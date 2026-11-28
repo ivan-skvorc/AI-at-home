@@ -28,4 +28,5 @@ cd ../../frontend && pnpm exec playwright test cad-preview
 - **Render on demand.** No animation loop, no damping, no auto-rotation: the
   idle-frame check fails on any of them.
 - **GLB is metres and Y-up; STL is millimetres and Z-up.** The bounding box is
-  reported in the CAD frame (Z up) and compared with the CAD report in e2e.
+  reported in the CAD frame (Z up) and compared with the fixture's report in
+  e2e.

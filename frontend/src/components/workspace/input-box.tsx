@@ -9,22 +9,15 @@ import {
   ChevronDownIcon,
   GlobeIcon,
   GlobeLockIcon,
-  GraduationCapIcon,
-  LightbulbIcon,
   Loader2Icon,
   MicIcon,
   PaperclipIcon,
   PlusIcon,
-  RocketIcon,
   SparklesIcon,
   SquareIcon,
   TargetIcon,
   Undo2Icon,
-  UsersRoundIcon,
-  WorkflowIcon,
-  TriangleAlertIcon,
   XIcon,
-  ZapIcon,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -73,7 +66,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenuGroup,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { fetch } from "@/core/api/fetcher";
@@ -95,17 +87,13 @@ import {
   isHiddenFromUIMessage,
   type FileInMessage,
 } from "@/core/messages/utils";
-import { lacksToolSupport } from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
 import {
-  getReasoningEffortOptions,
   getResolvedMode,
   type InputMode,
-  isThinkingRequired,
   type ReasoningEffortValue,
   reasoningEffortForMode,
   resolveReasoningEffort,
-  supportsThinking as modelSupportsThinking,
 } from "@/core/models/reasoning";
 import { attachProjectDocument } from "@/core/projects/api";
 import {
@@ -179,14 +167,6 @@ import {
 import { isCompositionConfirmEnter, isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from "../ai-elements/model-selector";
 import { Suggestion, Suggestions } from "../ai-elements/suggestion";
 import {
   DropdownMenu,
@@ -195,6 +175,12 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+import {
+  ComposerModeMenu,
+  ComposerModelPicker,
+  ComposerReasoningEffortMenu,
+  ComposerSubagentModelPicker,
+} from "./composer-run-controls";
 import { DeviationMonitorControl } from "./deviation-monitor/deviation-monitor-control";
 import { InputAttachment } from "./input-attachment";
 import {
@@ -238,17 +224,7 @@ import {
 } from "./mentions/mention-picker";
 import { getMentionQuery, type MentionQuery } from "./mentions/query";
 import { useThread } from "./messages/context";
-import {
-  DoubleUltracodeNotice,
-  DoubleUltracodeWarningTooltip,
-  ModeHoverGuide,
-} from "./mode-hover-guide";
-import {
-  ModelDisplayName,
-  ModelPickerControls,
-  ModelPickerList,
-  ModelPickerRow,
-} from "./model-picker-controls";
+import { DoubleUltracodeNotice } from "./mode-hover-guide";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
 import { ToolApprovalMode } from "./tool-approval-mode";
 import { Tooltip } from "./tooltip";
@@ -698,7 +674,7 @@ export function InputBox({
 
   const [followups, setFollowups] = useState<string[]>([]);
   const { data: suggestionsConfig } = useSuggestionsConfig();
-  const [localSettings, setLocalSettings] = useLocalSettings();
+  const [localSettings] = useLocalSettings();
   const suggestionsConfigLoaded = suggestionsConfig !== undefined;
   // Effective enablement = server master switch AND the per-user opt-in
   // (defaults off to avoid the extra per-turn LLM call / cost).
@@ -930,79 +906,6 @@ export function InputBox({
   }, [context.model_name, models]);
 
   const resolvedModelName = selectedModel?.name;
-
-  const supportThinking = useMemo(
-    () => modelSupportsThinking(selectedModel),
-    [selectedModel],
-  );
-
-  const thinkingRequired = useMemo(
-    () => isThinkingRequired(selectedModel),
-    [selectedModel],
-  );
-
-  // Effort choices come from the model's reasoning contract (issue #5073), so
-  // a provider that only accepts e.g. low/high/max never sees a generic value.
-  const reasoningEffortOptions = useMemo(
-    () => getReasoningEffortOptions(selectedModel),
-    [selectedModel],
-  );
-
-  const supportReasoningEffort = reasoningEffortOptions.length > 0;
-
-  const effectiveReasoningEffort = useMemo(
-    () =>
-      resolveReasoningEffort(
-        selectedModel,
-        context.reasoning_effort ??
-          reasoningEffortForMode(context.mode ?? "pro", selectedModel),
-      ),
-    [context.mode, context.reasoning_effort, selectedModel],
-  );
-
-  const reasoningEffortLabel = useCallback(
-    (effort: string | undefined) => {
-      switch (effort) {
-        case "minimal":
-          return t.inputBox.reasoningEffortMinimal;
-        case "low":
-          return t.inputBox.reasoningEffortLow;
-        case "medium":
-          return t.inputBox.reasoningEffortMedium;
-        case "high":
-          return t.inputBox.reasoningEffortHigh;
-        case "xhigh":
-          return t.inputBox.reasoningEffortXhigh;
-        case "max":
-          return t.inputBox.reasoningEffortMax;
-        default:
-          return effort ?? "";
-      }
-    },
-    [t],
-  );
-
-  const reasoningEffortDescription = useCallback(
-    (effort: string) => {
-      switch (effort) {
-        case "minimal":
-          return t.inputBox.reasoningEffortMinimalDescription;
-        case "low":
-          return t.inputBox.reasoningEffortLowDescription;
-        case "medium":
-          return t.inputBox.reasoningEffortMediumDescription;
-        case "high":
-          return t.inputBox.reasoningEffortHighDescription;
-        case "xhigh":
-          return t.inputBox.reasoningEffortXhighDescription;
-        case "max":
-          return t.inputBox.reasoningEffortMaxDescription;
-        default:
-          return null;
-      }
-    },
-    [t],
-  );
 
   const draftKey = useMemo(
     () =>
@@ -1340,10 +1243,6 @@ export function InputBox({
       setSubagentModelDialogOpen(false);
     },
     [onContextChange, context],
-  );
-  const subagentSelected = useMemo(
-    () => models.find((m) => m.name === context.subagent_model_name),
-    [context.subagent_model_name, models],
   );
 
   // Fork: the per-conversation internet switch (FORK.md §27). `undefined` means
@@ -3693,332 +3592,21 @@ export function InputBox({
               threadId={isWelcomeMode ? undefined : threadId}
               disabled={composerLocked}
             />
-            <PromptInputActionMenu>
-              <ModeHoverGuide
-                mode={
-                  context.mode === "flash" ||
-                  context.mode === "thinking" ||
-                  context.mode === "pro" ||
-                  context.mode === "ultra" ||
-                  context.mode === "democracy" ||
-                  context.mode === "ultracode" ||
-                  context.mode === "double_ultracode"
-                    ? context.mode
-                    : "flash"
-                }
-              >
-                <PromptInputActionMenuTrigger
-                  className="max-w-28 gap-1! px-2! sm:max-w-none"
-                  disabled={composerLocked}
-                >
-                  <div>
-                    {context.mode === "flash" && <ZapIcon className="size-3" />}
-                    {context.mode === "thinking" && (
-                      <LightbulbIcon className="size-3" />
-                    )}
-                    {context.mode === "pro" && (
-                      <GraduationCapIcon className="size-3" />
-                    )}
-                    {context.mode === "ultra" && (
-                      <RocketIcon className="size-3 text-[#dabb5e]" />
-                    )}
-                    {context.mode === "democracy" && (
-                      <UsersRoundIcon className="size-3 text-[#7c9ec4]" />
-                    )}
-                    {context.mode === "ultracode" && (
-                      <WorkflowIcon className="size-3 text-[#dabb5e]" />
-                    )}
-                    {context.mode === "double_ultracode" && (
-                      <TriangleAlertIcon className="size-3 text-[#dabb5e]" />
-                    )}
-                  </div>
-                  <div
-                    className={cn(
-                      "truncate text-xs font-normal",
-                      context.mode === "ultra" || workflowMode
-                        ? "golden-text"
-                        : "",
-                    )}
-                  >
-                    {(context.mode === "flash" && t.inputBox.flashMode) ||
-                      (context.mode === "thinking" &&
-                        t.inputBox.reasoningMode) ||
-                      (context.mode === "pro" && t.inputBox.proMode) ||
-                      (context.mode === "ultra" && t.inputBox.ultraMode) ||
-                      (context.mode === "democracy" &&
-                        t.inputBox.democracyMode) ||
-                      (context.mode === "ultracode" &&
-                        t.inputBox.ultracodeMode) ||
-                      (context.mode === "double_ultracode" &&
-                        t.inputBox.doubleUltracodeMode)}
-                  </div>
-                </PromptInputActionMenuTrigger>
-              </ModeHoverGuide>
-              <PromptInputActionMenuContent className="w-80">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="text-muted-foreground text-xs">
-                    {t.inputBox.mode}
-                  </DropdownMenuLabel>
-                  <PromptInputActionMenu>
-                    {!thinkingRequired && (
-                      <PromptInputActionMenuItem
-                        className={cn(
-                          context.mode === "flash"
-                            ? "text-accent-foreground"
-                            : "text-muted-foreground/65",
-                        )}
-                        onSelect={() => handleModeSelect("flash")}
-                      >
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-1 font-bold">
-                            <ZapIcon
-                              className={cn(
-                                "mr-2 size-4",
-                                context.mode === "flash" &&
-                                  "text-accent-foreground",
-                              )}
-                            />
-                            {t.inputBox.flashMode}
-                          </div>
-                          <div className="pl-7 text-xs">
-                            {t.inputBox.flashModeDescription}
-                          </div>
-                        </div>
-                        {context.mode === "flash" ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </PromptInputActionMenuItem>
-                    )}
-                    {supportThinking && (
-                      <PromptInputActionMenuItem
-                        className={cn(
-                          context.mode === "thinking"
-                            ? "text-accent-foreground"
-                            : "text-muted-foreground/65",
-                        )}
-                        onSelect={() => handleModeSelect("thinking")}
-                      >
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-1 font-bold">
-                            <LightbulbIcon
-                              className={cn(
-                                "mr-2 size-4",
-                                context.mode === "thinking" &&
-                                  "text-accent-foreground",
-                              )}
-                            />
-                            {t.inputBox.reasoningMode}
-                          </div>
-                          <div className="pl-7 text-xs">
-                            {t.inputBox.reasoningModeDescription}
-                          </div>
-                        </div>
-                        {context.mode === "thinking" ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </PromptInputActionMenuItem>
-                    )}
-                    <PromptInputActionMenuItem
-                      className={cn(
-                        context.mode === "pro"
-                          ? "text-accent-foreground"
-                          : "text-muted-foreground/65",
-                      )}
-                      onSelect={() => handleModeSelect("pro")}
-                    >
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-1 font-bold">
-                          <GraduationCapIcon
-                            className={cn(
-                              "mr-2 size-4",
-                              context.mode === "pro" &&
-                                "text-accent-foreground",
-                            )}
-                          />
-                          {t.inputBox.proMode}
-                        </div>
-                        <div className="pl-7 text-xs">
-                          {t.inputBox.proModeDescription}
-                        </div>
-                      </div>
-                      {context.mode === "pro" ? (
-                        <CheckIcon className="ml-auto size-4" />
-                      ) : (
-                        <div className="ml-auto size-4" />
-                      )}
-                    </PromptInputActionMenuItem>
-                    <PromptInputActionMenuItem
-                      className={cn(
-                        context.mode === "ultra"
-                          ? "text-accent-foreground"
-                          : "text-muted-foreground/65",
-                      )}
-                      onSelect={() => handleModeSelect("ultra")}
-                    >
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-1 font-bold">
-                          <RocketIcon
-                            className={cn(
-                              "mr-2 size-4",
-                              context.mode === "ultra" && "text-[#dabb5e]",
-                            )}
-                          />
-                          <div
-                            className={cn(
-                              context.mode === "ultra" && "golden-text",
-                            )}
-                          >
-                            {t.inputBox.ultraMode}
-                          </div>
-                        </div>
-                        <div className="pl-7 text-xs">
-                          {t.inputBox.ultraModeDescription}
-                        </div>
-                      </div>
-                      {context.mode === "ultra" ? (
-                        <CheckIcon className="ml-auto size-4" />
-                      ) : (
-                        <div className="ml-auto size-4" />
-                      )}
-                    </PromptInputActionMenuItem>
-                    {ultracodeAvailable && (
-                      <PromptInputActionMenuItem
-                        className={cn(
-                          context.mode === "ultracode"
-                            ? "text-accent-foreground"
-                            : "text-muted-foreground/65",
-                        )}
-                        onSelect={() => handleModeSelect("ultracode")}
-                      >
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-1 font-bold">
-                            <WorkflowIcon
-                              className={cn(
-                                "mr-2 size-4",
-                                context.mode === "ultracode" &&
-                                  "text-[#dabb5e]",
-                              )}
-                            />
-                            <div
-                              className={cn(
-                                context.mode === "ultracode" && "golden-text",
-                              )}
-                            >
-                              {t.inputBox.ultracodeMode}
-                            </div>
-                          </div>
-                          <div className="pl-7 text-xs">
-                            {t.inputBox.ultracodeModeDescription}
-                          </div>
-                        </div>
-                        {context.mode === "ultracode" ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </PromptInputActionMenuItem>
-                    )}
-                    {ultracodeAvailable && (
-                      <DoubleUltracodeWarningTooltip>
-                        <PromptInputActionMenuItem
-                          className={cn(
-                            context.mode === "double_ultracode"
-                              ? "text-accent-foreground"
-                              : "text-muted-foreground/65",
-                          )}
-                          onSelect={() => handleModeSelect("double_ultracode")}
-                        >
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-center gap-1 font-bold">
-                              <TriangleAlertIcon
-                                className={cn(
-                                  "mr-2 size-4",
-                                  context.mode === "double_ultracode" &&
-                                    "text-[#dabb5e]",
-                                )}
-                              />
-                              <div
-                                className={cn(
-                                  context.mode === "double_ultracode" &&
-                                    "golden-text",
-                                )}
-                              >
-                                {t.inputBox.doubleUltracodeMode}
-                              </div>
-                            </div>
-                            <div className="pl-7 text-xs">
-                              {t.inputBox.doubleUltracodeModeDescription}
-                            </div>
-                          </div>
-                          {context.mode === "double_ultracode" ? (
-                            <CheckIcon className="ml-auto size-4" />
-                          ) : (
-                            <div className="ml-auto size-4" />
-                          )}
-                        </PromptInputActionMenuItem>
-                      </DoubleUltracodeWarningTooltip>
-                    )}
-                  </PromptInputActionMenu>
-                </DropdownMenuGroup>
-              </PromptInputActionMenuContent>
-            </PromptInputActionMenu>
+            <ComposerModeMenu
+              mode={context.mode}
+              model={selectedModel}
+              ultracodeAvailable={ultracodeAvailable}
+              disabled={composerLocked}
+              onSelect={handleModeSelect}
+            />
             {knowledgeScopeControl}
-            {supportReasoningEffort && context.mode !== "flash" && (
-              <PromptInputActionMenu>
-                <PromptInputActionMenuTrigger
-                  className="hidden gap-1! px-2! sm:inline-flex"
-                  disabled={composerLocked}
-                  aria-label={`${t.inputBox.reasoningEffort}: ${reasoningEffortLabel(effectiveReasoningEffort)}`}
-                >
-                  <div className="text-xs font-normal">
-                    <span className="hidden @[40rem]/composer-footer:inline">
-                      {t.inputBox.reasoningEffort}:{" "}
-                    </span>
-                    {reasoningEffortLabel(effectiveReasoningEffort)}
-                  </div>
-                </PromptInputActionMenuTrigger>
-                <PromptInputActionMenuContent className="w-70">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="text-muted-foreground text-xs">
-                      {t.inputBox.reasoningEffort}
-                    </DropdownMenuLabel>
-                    <PromptInputActionMenu>
-                      {reasoningEffortOptions.map((effort) => (
-                        <PromptInputActionMenuItem
-                          key={effort}
-                          className={cn(
-                            effectiveReasoningEffort === effort
-                              ? "text-accent-foreground"
-                              : "text-muted-foreground/65",
-                          )}
-                          onSelect={() => handleReasoningEffortSelect(effort)}
-                        >
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-center gap-1 font-bold">
-                              {reasoningEffortLabel(effort)}
-                            </div>
-                            {reasoningEffortDescription(effort) && (
-                              <div className="pl-2 text-xs">
-                                {reasoningEffortDescription(effort)}
-                              </div>
-                            )}
-                          </div>
-                          {effectiveReasoningEffort === effort ? (
-                            <CheckIcon className="ml-auto size-4" />
-                          ) : (
-                            <div className="ml-auto size-4" />
-                          )}
-                        </PromptInputActionMenuItem>
-                      ))}
-                    </PromptInputActionMenu>
-                  </DropdownMenuGroup>
-                </PromptInputActionMenuContent>
-              </PromptInputActionMenu>
-            )}
+            <ComposerReasoningEffortMenu
+              mode={context.mode}
+              model={selectedModel}
+              reasoningEffort={context.reasoning_effort}
+              disabled={composerLocked}
+              onSelect={handleReasoningEffortSelect}
+            />
           </PromptInputTools>
           <PromptInputTools className="w-full min-w-0 justify-end sm:w-auto">
             {goalObjectiveCounter && (
@@ -4039,169 +3627,28 @@ export function InputBox({
                 {goalObjectiveCounter.length}/{goalObjectiveCounter.max}
               </span>
             )}
-            <ModelSelector
+            <ComposerModelPicker
+              models={models}
+              selectedModel={selectedModel}
+              selectedName={context.model_name}
+              mode={context.mode}
               open={modelDialogOpen}
               onOpenChange={setModelDialogOpen}
-            >
-              <ModelSelectorTrigger asChild>
-                <PromptInputButton
-                  className={cn(
-                    "max-w-40 min-w-0 sm:max-w-56",
-                    status === "streaming" &&
-                      canSendBusyInput &&
-                      "max-sm:max-w-28",
-                  )}
-                  disabled={composerLocked}
-                >
-                  <div className="flex min-w-0 flex-col text-left">
-                    <span className="text-muted-foreground text-[10px] leading-none">
-                      Main agent
-                    </span>
-                    <ModelSelectorName className="w-full text-xs font-normal">
-                      <ModelDisplayName
-                        displayName={selectedModel?.display_name}
-                        price={selectedModel?.price}
-                        variant="compact"
-                      />
-                    </ModelSelectorName>
-                  </div>
-                </PromptInputButton>
-              </ModelSelectorTrigger>
-              <ModelSelectorContent>
-                <ModelSelectorInput placeholder={t.inputBox.searchModels} />
-                <ModelPickerControls
-                  prefs={localSettings.modelPicker}
-                  onChange={(next) => setLocalSettings("modelPicker", next)}
-                />
-                <ModelPickerList
-                  models={models}
-                  prefs={localSettings.modelPicker}
-                  renderItem={(m) => {
-                    // Ultra mode delegates via the `task` tool (Double Plus
-                    // Ultracode via the workflow tools), so the lead model must
-                    // be able to call tools.
-                    const unusable =
-                      (context.mode === "ultra" || workflowMode) &&
-                      lacksToolSupport(m);
-                    return (
-                      <ModelSelectorItem
-                        key={m.name}
-                        value={m.name}
-                        disabled={unusable}
-                        onSelect={() => handleModelSelect(m.name)}
-                      >
-                        <ModelPickerRow
-                          model={m}
-                          showProvider={
-                            !localSettings.modelPicker.groupByProvider
-                          }
-                          annotation={
-                            unusable && (
-                              <span className="text-muted-foreground shrink-0 text-[10px]">
-                                {t.inputBox.noToolSupport}
-                              </span>
-                            )
-                          }
-                        />
-                        {m.name === context.model_name ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </ModelSelectorItem>
-                    );
-                  }}
-                />
-              </ModelSelectorContent>
-            </ModelSelector>
+              disabled={composerLocked}
+              triggerClassName={cn(
+                "max-w-40 min-w-0 sm:max-w-56",
+                status === "streaming" && canSendBusyInput && "max-sm:max-w-28",
+              )}
+              onSelect={handleModelSelect}
+            />
             {(context.mode === "ultra" || workflowMode) && (
-              // Deliberately not rendered for Democracy: a panel names its model
-              // per `task` call, and a thread-wide subagent override would be
-              // outranked by every one of them (see FORK.md §22 precedence).
-              <ModelSelector
+              <ComposerSubagentModelPicker
+                models={models}
+                selectedName={context.subagent_model_name}
                 open={subagentModelDialogOpen}
                 onOpenChange={setSubagentModelDialogOpen}
-              >
-                <ModelSelectorTrigger asChild>
-                  <PromptInputButton>
-                    <div className="flex min-w-0 flex-col items-start text-left">
-                      <span className="text-muted-foreground text-[10px] leading-none">
-                        Subagent
-                      </span>
-                      <ModelSelectorName className="w-full text-xs font-normal">
-                        {subagentSelected ? (
-                          <ModelDisplayName
-                            displayName={subagentSelected.display_name}
-                            price={subagentSelected.price}
-                            variant="compact"
-                          />
-                        ) : (
-                          "Follow lead"
-                        )}
-                      </ModelSelectorName>
-                    </div>
-                  </PromptInputButton>
-                </ModelSelectorTrigger>
-                <ModelSelectorContent>
-                  <ModelSelectorInput placeholder={t.inputBox.searchModels} />
-                  <ModelPickerControls
-                    prefs={localSettings.modelPicker}
-                    onChange={(next) => setLocalSettings("modelPicker", next)}
-                  />
-                  <ModelPickerList
-                    models={models}
-                    prefs={localSettings.modelPicker}
-                    // Keep tool-incapable models at the bottom (FORK.md §3).
-                    demoteLast={lacksToolSupport}
-                    leading={
-                      <ModelSelectorItem
-                        key="__follow_lead__"
-                        value="follow lead"
-                        onSelect={() => handleSubagentModelSelect(undefined)}
-                      >
-                        <div className="flex min-w-0 flex-1 flex-col">
-                          <ModelSelectorName>Follow lead</ModelSelectorName>
-                          <span className="text-muted-foreground truncate text-[10px]">
-                            Use the same model as the lead agent
-                          </span>
-                        </div>
-                        {context.subagent_model_name === undefined ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </ModelSelectorItem>
-                    }
-                    renderItem={(m) => (
-                      <ModelSelectorItem
-                        key={m.name}
-                        value={m.name}
-                        disabled={lacksToolSupport(m)}
-                        onSelect={() => handleSubagentModelSelect(m.name)}
-                      >
-                        <ModelPickerRow
-                          model={m}
-                          showProvider={
-                            !localSettings.modelPicker.groupByProvider
-                          }
-                          annotation={
-                            lacksToolSupport(m) && (
-                              <span className="text-muted-foreground shrink-0 text-[10px]">
-                                {t.inputBox.noToolSupport}
-                              </span>
-                            )
-                          }
-                        />
-                        {m.name === context.subagent_model_name ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </ModelSelectorItem>
-                    )}
-                  />
-                </ModelSelectorContent>
-              </ModelSelector>
+                onSelect={handleSubagentModelSelect}
+              />
             )}
             {status === "streaming" && canSendBusyInput && (
               <>

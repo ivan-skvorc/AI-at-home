@@ -157,6 +157,7 @@ counts.increment()
 | `budget_warn_fraction`  | `token_budget.warn_threshold`           | `None`            |
 | `budget_hard_fraction`  | `token_budget.hard_stop_threshold`      | `None`            |
 | `max_subagents_per_run` | Lead Agent 实际生效的每次运行委派总数   | 子 Agent 为 `None` |
+| `sandbox_container` | `sandbox.use` 为本地容器模式的 AIO 提供方（无 `base_url`、无 `provisioner_url`）时为 True，此时每个线程有自己的容器，`/mnt/user-data` 由主机挂载 | `False`（低于 0.2.15 的主机也是） |
 
 token 预算未启用时，五个 token 字段都是 `None`。子 Agent 的构建上下文投影的是子 Agent 的预算（`subagents.token_budget`，配置了按 Agent 覆盖时用覆盖值），而不是 Lead Agent 的。
 

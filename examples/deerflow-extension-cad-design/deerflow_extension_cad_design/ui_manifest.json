@@ -2,11 +2,8 @@
   "schema_version": 1,
   "entry": "static/dist/index.mjs",
   "files": [
-    "static/dist/chunks/chunk-4TQO3LJK.mjs",
     "static/dist/chunks/model-worker.mjs",
-    "static/dist/chunks/openscad.gz.wasm",
-    "static/dist/chunks/page-CYCIGAR3.mjs",
-    "static/dist/chunks/scad-worker.mjs",
+    "static/dist/chunks/page-CTKRWXM3.mjs",
     "static/dist/index.mjs"
   ]
 }

@@ -392,74 +392,6 @@ class TestBundledPluginDelivery:
 
         assert config.read_text(encoding="utf-8") == original
 
-
-class TestBundledCadPluginDelivery:
-    """Migration 73 hands existing installs the CAD module a fresh one ships enabled (FORK.md §51)."""
-
-    WORKFLOWS = TestBundledPluginDelivery.RECORD
-    CAD = {"name": "cad", "package": "deerflow-extension-cad", "use": "deerflow_extension_cad:install", "enabled": True, "required": False, "config": {"enabled": True}}
-    BASE = TestBundledPluginDelivery.BASE
-
-    def _example(self, tmp_path: Path) -> Path:
-        example = _write_example(tmp_path, version=73)
-        with example.open("a", encoding="utf-8") as handle:
-            yaml.safe_dump({"plugins": [self.WORKFLOWS, self.CAD]}, handle, sort_keys=False)
-        return example
-
-    def _plugins(self, config: Path) -> list:
-        return yaml.safe_load(config.read_text(encoding="utf-8"))["plugins"]
-
-    def test_an_install_on_the_previous_version_gets_the_record_after_its_own(self, tmp_path):
-        config = tmp_path / "config.yaml"
-        config.write_text(f"config_version: 72\n{self.BASE}" + yaml.safe_dump({"plugins": [self.WORKFLOWS]}, sort_keys=False), encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        assert self._plugins(config) == [self.WORKFLOWS, self.CAD]
-
-    def test_a_workflows_record_the_operator_removed_does_not_come_back_with_it(self, tmp_path):
-        # Each migration names the plugins it delivers. Delivering "whatever the example
-        # lists" would undo a removal the operator made after migration 66.
-        config = tmp_path / "config.yaml"
-        config.write_text(f"config_version: 72\n{self.BASE}plugins: []\n", encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        assert self._plugins(config) == [self.CAD]
-
-    def test_a_module_installed_by_hand_keeps_its_own_record(self, tmp_path):
-        """`make extension-install` wrote a record with the operator's limits; the upgrade leaves it alone."""
-        mine = {"name": "cad", "package": "deerflow-extension-cad", "use": "deerflow_extension_cad:install", "enabled": False, "config": {"timeout_seconds": 10}}
-        config = tmp_path / "config.yaml"
-        config.write_text(f"config_version: 72\n{self.BASE}" + yaml.safe_dump({"plugins": [mine]}, sort_keys=False), encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        assert self._plugins(config) == [mine]
-
-    def test_an_install_many_versions_behind_gets_both_bundled_plugins(self, tmp_path):
-        config = tmp_path / "config.yaml"
-        config.write_text(f"config_version: 65\n{self.BASE}", encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        assert self._plugins(config) == [self.WORKFLOWS, self.CAD]
-
-    def test_it_runs_once_so_removing_the_record_sticks(self, tmp_path):
-        config = tmp_path / "config.yaml"
-        original = f"config_version: 73\n{self.BASE}plugins: []\n"
-        config.write_text(original, encoding="utf-8")
-
-        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
-
-        assert config.read_text(encoding="utf-8") == original
-
-    def test_the_real_example_holds_the_record_the_migration_delivers(self):
-        example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
-        assert example["config_version"] >= 73
-        assert [entry["name"] for entry in example["plugins"]] == ["workflows", "cad", "cad-preview", "cad-design"]
-        assert config_upgrade.MIGRATIONS[73]["plugins_from_example"] == ("cad",)
-
     @pytest.mark.parametrize(
         ("launcher", "gateway_start"),
         [
@@ -482,6 +414,96 @@ class TestBundledCadPluginDelivery:
 
         for name in config_upgrade.MIGRATIONS[66]["plugins_from_example"]:
             assert shipped[name]["enabled"] is True
+
+
+class TestRetiredCadPluginRemoval:
+    """Migration 79 removes the retired CAD module's record (FORK.md §51, §58).
+
+    Migration 73 delivered ``cad`` (``cad_build``) to every install. The package
+    is no longer shipped, so a record that still names it logs an import error
+    on every start, or stops the start when it is marked ``required``. The same
+    pass drops the design page's ``max_source_bytes``, which nothing reads now.
+    """
+
+    WORKFLOWS = TestBundledPluginDelivery.RECORD
+    CAD = {"name": "cad", "package": "deerflow-extension-cad", "use": "deerflow_extension_cad:install", "enabled": True, "required": False, "config": {"enabled": True}}
+    CAD_PREVIEW = {"name": "cad-preview", "package": "deerflow-extension-cad-preview", "use": "deerflow_extension_cad_preview:install", "enabled": True, "required": False, "config": {"enabled": True}}
+    CAD_DESIGN = {
+        "name": "cad-design",
+        "package": "deerflow-extension-cad-design",
+        "use": "deerflow_extension_cad_design:install",
+        "enabled": True,
+        "required": False,
+        "config": {"enabled": True, "storage_path": "cad-design/designs.sqlite"},
+    }
+    BASE = TestBundledPluginDelivery.BASE
+
+    def _example(self, tmp_path: Path) -> Path:
+        example = _write_example(tmp_path, version=79)
+        with example.open("a", encoding="utf-8") as handle:
+            yaml.safe_dump({"plugins": [self.WORKFLOWS, self.CAD_PREVIEW, self.CAD_DESIGN]}, handle, sort_keys=False)
+        return example
+
+    def _upgrade(self, tmp_path: Path, plugins: list, version: int = 78) -> list:
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: {version}\n{self.BASE}" + yaml.safe_dump({"plugins": plugins}, sort_keys=False), encoding="utf-8")
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+        upgraded = yaml.safe_load(config.read_text(encoding="utf-8"))
+        assert upgraded["config_version"] == 79
+        return upgraded["plugins"]
+
+    def test_the_bundled_record_goes_and_the_others_stay_in_order(self, tmp_path):
+        shipped_design = {**self.CAD_DESIGN, "config": {**self.CAD_DESIGN["config"], "max_source_bytes": 65536}}
+
+        plugins = self._upgrade(tmp_path, [self.WORKFLOWS, self.CAD, self.CAD_PREVIEW, shipped_design])
+
+        assert plugins == [self.WORKFLOWS, self.CAD_PREVIEW, self.CAD_DESIGN]
+        # A structural rewrite drops the file's comments; the backup keeps the original.
+        backup = yaml.safe_load((tmp_path / "config.yaml.bak").read_text(encoding="utf-8"))
+        assert backup["plugins"][1] == self.CAD
+
+    @pytest.mark.parametrize(
+        "record",
+        [
+            {"name": "parts", "package": "deerflow_extension_cad", "use": "deerflow_extension_cad:install", "enabled": False},
+            {"name": "cad", "use": "deerflow_extension_cad:install", "required": True},
+            {"name": "mine", "package": "Deerflow.Extension.CAD"},
+        ],
+        ids=["disabled-hand-install", "required-without-package", "package-only"],
+    )
+    def test_a_record_found_by_module_or_package_is_removed_too(self, tmp_path, record):
+        assert self._upgrade(tmp_path, [self.WORKFLOWS, record]) == [self.WORKFLOWS]
+
+    def test_another_plugin_that_is_only_named_cad_is_kept(self, tmp_path):
+        theirs = {"name": "cad", "package": "acme-cad", "use": "acme_cad:install", "enabled": True}
+
+        assert self._upgrade(tmp_path, [theirs, self.CAD_DESIGN]) == [theirs, self.CAD_DESIGN]
+
+    def test_max_source_bytes_goes_only_from_the_design_record(self, tmp_path):
+        other = {"name": "acme", "use": "acme_ext:install", "config": {"max_source_bytes": 4096}}
+        hand_installed = {"name": "designs", "package": "deerflow_extension_cad_design", "use": "deerflow_extension_cad_design:install", "config": {"storage_path": "/srv/designs.sqlite", "max_source_bytes": 1024}}
+
+        plugins = self._upgrade(tmp_path, [other, hand_installed])
+
+        assert plugins == [other, {**hand_installed, "config": {"storage_path": "/srv/designs.sqlite"}}]
+
+    def test_a_config_without_either_keeps_its_comments(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        original = f"config_version: 78\n{self.BASE}# my plugins\n" + yaml.safe_dump({"plugins": [self.WORKFLOWS, self.CAD_DESIGN]}, sort_keys=False)
+        config.write_text(original, encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert config.read_text(encoding="utf-8") == original.replace("config_version: 78", "config_version: 79", 1)
+
+    def test_the_real_example_and_migrations_no_longer_carry_the_module(self):
+        example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        assert example["config_version"] >= 79
+        assert [entry["name"] for entry in example["plugins"]] == ["workflows", "cad-preview", "cad-design"]
+        assert not [entry for entry in example["plugins"] if entry["use"].startswith("deerflow_extension_cad:")]
+        (design,) = [entry for entry in example["plugins"] if entry["name"] == "cad-design"]
+        assert "max_source_bytes" not in design["config"]
+        assert all("cad" not in migration.get("plugins_from_example", ()) for migration in config_upgrade.MIGRATIONS.values())
 
 
 class TestWorkflowLimitRaise:

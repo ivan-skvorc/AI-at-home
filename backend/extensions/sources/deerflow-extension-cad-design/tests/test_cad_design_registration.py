@@ -24,7 +24,7 @@ class Registry:
     def middlewares(self, contributor):
         pass
 
-    def routers(self, routers):
+    def service(self, service):
         pass
 
 
@@ -45,10 +45,11 @@ def test_the_manifest_lists_exactly_the_built_files_within_the_host_limits(root)
     sizes = {name: (root / name).stat().st_size for name in manifest["files"]}
     assert all(size < 4 * MiB for size in sizes.values()), sizes
     assert sum(sizes.values()) < 16 * MiB
-    assert any(name.endswith(".wasm") for name in manifest["files"]), "the OpenSCAD build ships with the page"
+    # The page renders nothing itself: no OpenSCAD WebAssembly build, which kept the package GPL.
+    assert not any(name.endswith(".wasm") for name in manifest["files"])
+    assert not any("scad-worker" in name for name in manifest["files"])
 
 
-@pytest.mark.parametrize("worker", ["scad-worker.mjs", "model-worker.mjs"])
-def test_each_worker_is_one_module_that_fetches_nothing(root, worker):
-    source = (root / "static/dist/chunks" / worker).read_text(encoding="utf-8")
+def test_the_mesh_worker_is_one_module_that_fetches_nothing(root):
+    source = (root / "static/dist/chunks/model-worker.mjs").read_text(encoding="utf-8")
     assert NETWORK.search(source) is None

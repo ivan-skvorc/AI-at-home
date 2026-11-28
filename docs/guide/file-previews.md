@@ -41,18 +41,20 @@ a download, for every preview extension.
 
 The [CAD model preview](../../examples/deerflow-extension-cad-preview/README.md)
 draws `.glb` and `.stl` files as a model you can rotate, in the panel, the Files view
-and the standalone reader, on desktop and phone widths. It ships installed and
-enabled in this fork, beside the CAD module whose files it shows; turn it off with
-`make extension-disable NAME=cad-preview`, after which GLB and STL files keep the
-download fallback.
+and the standalone reader, on desktop and phone widths. It reads any GLB or STL
+inside its caps, among them the bodies and `assembly.glb` that the `cad-modeling`
+skill renders in a conversation's container (the [CAD design page](cad-design.md)
+shows the same files). It ships installed and enabled in this fork; turn it off
+with `make extension-disable NAME=cad-preview`, after which GLB and STL files
+keep the download fallback.
 
 - Drag to rotate, scroll or pinch to zoom, right-drag to pan; Fit, Reset, Top,
   Front and Iso views and an Edges toggle. The view is drawn only when it changes
   and never turns by itself.
 - `Bounding box X × Y × Z mm (from the mesh)` is shown along the CAD axes, Z up.
   A GLB is read as metres (the glTF unit) and an STL as millimetres.
-- A `*.failed.glb` from a build that failed a check carries a banner naming the
-  build's report file.
+- A file named `*.failed.glb` carries a banner naming the `.report.json` beside
+  it. No shipped tool writes that name now; the banner is for any tool that does.
 - Over 1,000,000 triangles or vertices, 20,000 parts, or a GLB the strict reader
   refuses (external buffers, required extensions such as Draco, broken indices),
   the panel says why and offers the original as a download.

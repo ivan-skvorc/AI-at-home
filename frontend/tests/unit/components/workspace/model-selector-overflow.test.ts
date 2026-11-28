@@ -28,7 +28,8 @@ function selectedModelWrapperClasses(relativePath: string) {
 
 describe("selected model name truncation", () => {
   it.each([
-    "src/components/workspace/input-box.tsx",
+    // The composer's pickers, shared with plugin pages' composer controls.
+    "src/components/workspace/composer-run-controls.tsx",
     "src/components/workspace/sidecar/sidecar-panel.tsx",
   ])("lets the selected model name stretch in %s", (relativePath) => {
     const classes = selectedModelWrapperClasses(relativePath);
@@ -50,9 +51,9 @@ describe("model picker integration", () => {
   // just drops search, sorting, grouping and prices on that one screen.
   it.each([
     {
-      relativePath: "src/components/workspace/input-box.tsx",
-      open: "modelDialogOpen",
-      onSelect: "handleModelSelect",
+      relativePath: "src/components/workspace/composer-run-controls.tsx",
+      open: "open",
+      onSelect: "onSelect",
     },
     {
       relativePath: "src/components/workspace/sidecar/sidecar-panel.tsx",
@@ -84,6 +85,35 @@ describe("model picker integration", () => {
       ]) {
         expect(contents).not.toContain(`<${upstreamComponent}`);
       }
+    },
+  );
+});
+
+describe("the composer's pickers have one implementation", () => {
+  // The composer and plugin pages' composer controls render the same component,
+  // so a picker change cannot reach one and miss the other.
+  it.each([
+    {
+      relativePath: "src/components/workspace/input-box.tsx",
+      open: "modelDialogOpen",
+      onSelect: "handleModelSelect",
+    },
+    {
+      relativePath: "src/components/workspace/plugin-composer-controls.tsx",
+      open: "modelOpen",
+      onSelect: "handleModelSelect",
+    },
+  ])(
+    "$relativePath renders ComposerModelPicker",
+    ({ relativePath, open, onSelect }) => {
+      const contents = source(relativePath);
+      expect(contents).toContain("<ComposerModelPicker");
+      expect(contents).toMatch(new RegExp(`open=\\{${open}\\}`));
+      expect(contents).toMatch(new RegExp(`onSelect=\\{${onSelect}\\}`));
+      expect(contents).toContain("<ComposerModeMenu");
+      expect(contents).toContain("<ComposerReasoningEffortMenu");
+      expect(contents).toContain("<ComposerSubagentModelPicker");
+      expect(contents).not.toMatch(/<ModelSelector\s/);
     },
   );
 });

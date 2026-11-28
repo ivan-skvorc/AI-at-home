@@ -144,6 +144,14 @@ class TestAioSandboxPreflight:
         assert result.returncode == 0
         assert "PULLED my.registry/sandbox:1.2.3" in result.stdout
 
+    def test_missing_cad_image_says_build_it_and_never_pulls(self):
+        config = AIO_CONFIG_WITH_IMAGE.replace("my.registry/sandbox:1.2.3", "deerflow-sandbox-cad:local")
+        fake = 'docker() { if [ "$1" = "image" ]; then return 1; fi; if [ "$1" = "pull" ]; then echo "PULLED $2"; fi; return 0; }; '
+        result = _run_sourced(config, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 1
+        assert "PULLED" not in result.stdout
+        assert "make sandbox-cad-image" in result.stderr
+
     def test_pull_failure_fails_with_setup_sandbox_hint(self):
         fake = 'docker() { if [ "$1" = "info" ]; then return 0; fi; return 1; }; '
         result = _run_sourced(AIO_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')

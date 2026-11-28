@@ -1,0 +1,70 @@
+name: Sandbox CAD Image
+
+# Builds the CAD sandbox image (docker/sandbox-cad, FORK.md §58) with the same
+# command an operator runs, `make sandbox-cad-image`, and runs the cad-modeling
+# skill's cadkit.py through its whole loop inside it (docker/sandbox-cad/smoke.sh):
+# render, check, views, print --slice, export --step --3mf. Nothing is published;
+# operators build the image locally. It runs when the image, the skill whose
+# script the image must carry, or the toggle that selects the image changes.
+# backend/tests/test_sandbox_cad_image.py pins these paths and the two steps.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'docker/sandbox-cad/**'
+      - 'skills/public/cad-modeling/**'
+      - 'scripts/sandbox_toggle.py'
+      - '.github/workflows/sandbox-cad-image.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docker/sandbox-cad/**'
+      - 'skills/public/cad-modeling/**'
+      - 'scripts/sandbox_toggle.py'
+      - '.github/workflows/sandbox-cad-image.yml'
+
+concurrency:
+  group: sandbox-cad-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Free disk space for the sandbox image
+        # The base image alone is over 13 GB unpacked. This job needs Docker and
+        # make, not the runner's mobile/.NET/Haskell SDKs.
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Pull the base image and record its digest
+        # The base tag could move; the digest says what this run tested. The pull
+        # also keeps the base in the local image store, which a BuildKit build
+        # does not do on its own.
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          base="$(sed -n 's/^SANDBOX_AIO_IMAGE = //p' Makefile)"
+          docker pull "$base" >/dev/null
+          printf 'Base image: `%s`\n' "$(docker image inspect "$base" --format '{{index .RepoDigests 0}}')" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the CAD image
+        timeout-minutes: 40
+        run: make sandbox-cad-image
+
+      - name: Run the cadkit loop inside the image
+        timeout-minutes: 15
+        run: bash docker/sandbox-cad/smoke.sh deerflow-sandbox-cad:local "$GITHUB_WORKSPACE"

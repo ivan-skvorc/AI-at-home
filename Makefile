@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help drift-eval cad-eval config config-upgrade test-config-version check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help drift-eval config config-upgrade test-config-version check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable sandbox-cad-image setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -43,7 +43,6 @@ help:
 	@echo "  make detect-thread-boundaries - Inventory backend executor/thread/event-loop boundaries"
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
 	@echo "  make drift-eval      - Measure mission drift on a large PDF (PAGES=/MODE=/PRIMARY=/JUDGE=)"
-	@echo "  make cad-eval MODEL=... - Score a model's CAD parts against ground truth (K=3 BAND= SPEC= CAD_PATH= MEASURE_PYTHON=; needs make dev)"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make extension-install SOURCE=... - Install and enable a trusted Python extension"
 	@echo "  make extension-upgrade SOURCE=... - Replace an installed extension and keep its config"
@@ -52,8 +51,9 @@ help:
 	@echo "  make extension-disable NAME=...  - Disable an extension without uninstalling it"
 	@echo "  make extension-remove NAME=...   - Uninstall a managed extension"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
-	@echo "  make sandbox-enable  - Switch config.yaml to the containerized AIO sandbox"
+	@echo "  make sandbox-enable  - Switch config.yaml to the containerized AIO sandbox (MODE=container [IMAGE=cad])"
 	@echo "  make sandbox-disable - Switch config.yaml back to the local sandbox"
+	@echo "  make sandbox-cad-image - Build the CAD sandbox image (OpenSCAD, slicer, CadQuery) for IMAGE=cad"
 	@echo "  make sandbox-up      - Start the standalone AIO sandbox container (localhost:8091)"
 	@echo "  make sandbox-down    - Stop and remove the AIO sandbox container"
 	@echo "  make sandbox-logs    - Follow the AIO sandbox container logs"
@@ -112,23 +112,6 @@ drift-eval:
 		$(if $(PRIMARY),--primary-model $(PRIMARY),) $(if $(JUDGE),--judge-model $(JUDGE),) \
 		$(if $(WINDOW),--context-window $(WINDOW),) $(if $(FACT),--fact $(FACT),)
 
-# CAD parts graded on ground truth: each spec's request goes to the running
-# agent on MODEL (a name from config.yaml), and the STEP it delivers is measured
-# again against numbers the model never saw. Opt-in and out of CI; needs
-# `make dev` up with the CAD module on. Without MODEL it prints usage and fails.
-# MEASURE_PYTHON names another Python with the CAD module, such as the kernel
-# venv; a path is taken from the repository root, because the recipe runs in
-# backend/, and a bare command name is left for PATH.
-# CAD_PATH=design drafts each part in OpenSCAD first, as the design page does
-# (not PATH=, which would replace the recipe's command search path).
-# Depth: docs/guide/cad-eval.md
-cad-eval:
-	@cd backend && PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run \
-		$(if $(MODEL),--model "$(MODEL)",) --k $(or $(K),3) \
-		$(if $(BAND),--band $(BAND),) $(if $(SPEC),--spec $(SPEC),) $(if $(QUANT),--quant $(QUANT),) $(if $(CAD_PATH),--path $(CAD_PATH),) \
-		$(if $(BASE_URL),--base-url $(BASE_URL),) $(if $(MAX_COST),--max-cost $(MAX_COST),) $(if $(NO_MODULE),--no-module,) \
-		$(if $(MEASURE_PYTHON),--measure-python "$(if $(findstring /,$(MEASURE_PYTHON)),$(abspath $(MEASURE_PYTHON)),$(MEASURE_PYTHON))",)
-
 support-bundle:
 	@$(BACKEND_UV_RUN) python ../scripts/support_bundle.py --include-doctor
 
@@ -169,9 +152,7 @@ check-agent-guidance:
 # Install all dependencies
 install:
 	@echo "Installing backend dependencies..."
-	@# Fork: the bundled CAD kernel (uv group `cad`) has no wheels for a C library older than
-	@# glibc 2.31; such a host installs everything else (FORK.md §51).
-	@cd backend && uv sync --locked || (echo "Retrying without the CAD kernel (uv group 'cad')" && uv sync --locked --no-group cad)
+	@cd backend && uv sync --locked
 	@echo "Installing frontend dependencies..."
 	@cd frontend && $(FRONTEND_PNPM) install
 	@echo "Installing pre-commit hooks..."
@@ -225,12 +206,25 @@ setup-sandbox:
 # MODE=container: per-thread containers with host-backed /mnt/user-data mounts —
 # the mode to use for clone-and-debug workflows (`make sandbox-enable MODE=container`).
 # Runs without uv on a Docker-only host (scripts/backend-python.sh).
+# IMAGE=cad (container mode only) selects the CAD image that sandbox-cad-image
+# builds; without IMAGE, container mode sets the stock pinned image. IMAGE is read
+# from the command line only, so an IMAGE exported by a CI job or shell is ignored.
 SANDBOX_MODE ?= $(or $(MODE),external)
+SANDBOX_IMAGE_FLAG = $(if $(filter command line,$(origin IMAGE)),--image $(IMAGE),)
 sandbox-enable:
-	@$(RUN_SHELL_SCRIPT) ./scripts/backend-python.sh scripts/sandbox_toggle.py enable --mode $(SANDBOX_MODE)
+	@$(RUN_SHELL_SCRIPT) ./scripts/backend-python.sh scripts/sandbox_toggle.py enable --mode $(SANDBOX_MODE) $(SANDBOX_IMAGE_FLAG)
 
 sandbox-disable:
 	@$(RUN_SHELL_SCRIPT) ./scripts/backend-python.sh scripts/sandbox_toggle.py disable
+
+# The CAD sandbox image (docker/sandbox-cad): the pinned AIO image plus OpenSCAD,
+# PrusaSlicer and the Python mesh and CAD libraries the cad-modeling skill runs.
+# It is built here and never pulled, so build it before IMAGE=cad takes effect.
+# Both tags must match scripts/sandbox_toggle.py (test_sandbox_cad_image.py).
+SANDBOX_AIO_IMAGE = ghcr.io/agent-infra/sandbox:1.11.0
+SANDBOX_CAD_IMAGE = deerflow-sandbox-cad:local
+sandbox-cad-image:
+	docker build -t $(SANDBOX_CAD_IMAGE) --build-arg BASE_IMAGE=$(SANDBOX_AIO_IMAGE) docker/sandbox-cad
 
 # Standalone AIO sandbox container (docker/docker-compose.sandbox.yml).
 # `make dev` auto-starts it when config selects base_url and it is unreachable;

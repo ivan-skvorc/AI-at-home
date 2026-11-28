@@ -32,6 +32,39 @@
       ],
       "reason": "Required Claude CLI invocation uses a fixed executable, an argv list, captured output streams, and shell=False.",
       "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/cad-modeling",
+      "source": "skillscan",
+      "rule_id": "python-subprocess",
+      "path": "scripts/cadkit.py",
+      "line": 427,
+      "evidence": "subprocess.run",
+      "file_sha256": "sha256:fb5114dc381b7685d6a859fc62a7b83cef6594642ddcb2c21a5635b09f690fc4",
+      "reason": "openscad --help to detect the Manifold backend: fixed executable from shutil.which, an argv list, shell=False, a 30 s timeout.",
+      "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/cad-modeling",
+      "source": "skillscan",
+      "rule_id": "python-subprocess",
+      "path": "scripts/cadkit.py",
+      "line": 509,
+      "evidence": "subprocess.run",
+      "file_sha256": "sha256:fb5114dc381b7685d6a859fc62a7b83cef6594642ddcb2c21a5635b09f690fc4",
+      "reason": "openscad renders one body: fixed executable from shutil.which, an argv list, shell=False, a timeout; the body name, -D defines and paths are validated first; runs only in the per-thread sandbox container.",
+      "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/cad-modeling",
+      "source": "skillscan",
+      "rule_id": "python-subprocess",
+      "path": "scripts/cadkit.py",
+      "line": 977,
+      "evidence": "subprocess.run",
+      "file_sha256": "sha256:fb5114dc381b7685d6a859fc62a7b83cef6594642ddcb2c21a5635b09f690fc4",
+      "reason": "prusa-slicer slices the print layout: fixed executable from shutil.which, an argv list of fixed flags and the version's own STL paths, shell=False, a 600 s timeout; runs only in the per-thread sandbox container.",
+      "expires_on": "2027-02-28"
     }
   ]
 }

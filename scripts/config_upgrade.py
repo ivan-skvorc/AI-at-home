@@ -189,6 +189,41 @@ def raise_shipped_workflow_limits(user: dict) -> list[str]:
     return changes
 
 
+# The CAD module (``cad_build``, package ``deerflow-extension-cad``) was retired
+# with migration 79 (FORK.md §51 and §58). Its record is matched by module and
+# package only: an operator may have given another plugin the name ``cad``.
+_RETIRED_CAD_PLUGIN = {"module:deerflow_extension_cad", "package:deerflow-extension-cad"}
+_CAD_DESIGN_PLUGIN = {"module:deerflow_extension_cad_design", "package:deerflow-extension-cad-design"}
+
+
+def remove_retired_cad_plugin(user: dict) -> list[str]:
+    """Drop the retired CAD module's record and the design page's unused key.
+
+    The package is no longer shipped, so a record that still names it logs an
+    import error on every start (or stops the start when it is marked
+    ``required``). The CAD design page no longer keeps OpenSCAD source of its
+    own, so ``max_source_bytes`` left its config; the extension still accepts
+    and ignores the key, so this is tidying, not a repair.
+    """
+    plugins = user.get("plugins")
+    if not isinstance(plugins, list):
+        return []
+    changes = []
+    kept = []
+    for record in plugins:
+        if _RETIRED_CAD_PLUGIN & _plugin_identity(record):
+            changes.append(f"plugins[{record.get('name')}] removed (the CAD module and cad_build were retired)")
+            continue
+        kept.append(record)
+        config = record.get("config") if _CAD_DESIGN_PLUGIN & _plugin_identity(record) else None
+        if isinstance(config, dict) and "max_source_bytes" in config:
+            del config["max_source_bytes"]
+            changes.append(f"plugins[{record.get('name')}].config.max_source_bytes removed (no longer used)")
+    if len(kept) != len(plugins):
+        user["plugins"] = kept
+    return changes
+
+
 MIGRATIONS = {
     1: {
         "description": "Rename src.* module paths to deerflow.*",
@@ -239,24 +274,26 @@ MIGRATIONS = {
         "description": "Raise the bundled workflows plugin's untouched limits to the extension's ceilings",
         "data_transform": raise_shipped_workflow_limits,
     },
-    73: {
-        # The CAD module is bundled (backend/extensions/sources) and enabled in
-        # the example; an existing install gets its record once (FORK.md §51).
-        "description": "Add the bundled CAD plugin that builds mechanical parts from a chat",
-        "plugins_from_example": ("cad",),
-    },
     76: {
         # The CAD model preview is bundled (backend/extensions/sources) and
-        # enabled in the example, so the CAD module's GLB and STL files open as
-        # a model; an existing install gets its record once.
+        # enabled in the example, so GLB and STL files open as a model; an
+        # existing install gets its record once.
         "description": "Add the bundled CAD model preview that draws GLB and STL files in the artifact panel",
         "plugins_from_example": ("cad-preview",),
     },
     78: {
         # The CAD design page is bundled (backend/extensions/sources) and enabled
         # in the example; an existing install gets its record once (FORK.md §58).
-        "description": "Add the bundled CAD design page that drafts parts in OpenSCAD and finalizes them with CadQuery",
+        "description": "Add the bundled CAD design page",
         "plugins_from_example": ("cad-design",),
+    },
+    79: {
+        # Migration 73 delivered the CAD module's record (`cad`, cad_build); the
+        # module is retired, and the design page renders OpenSCAD in the
+        # per-thread sandbox container instead (FORK.md §58). The same pass
+        # drops the design page's unused `max_source_bytes`.
+        "description": "Remove the retired CAD module record and the CAD design page's unused max_source_bytes",
+        "data_transform": remove_retired_cad_plugin,
     },
     # Future migrations go here:
     # 60: {

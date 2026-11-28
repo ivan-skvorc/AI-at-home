@@ -2,19 +2,13 @@
   "name": "deerflow-cad-design-ui",
   "private": true,
   "type": "module",
-  "license": "GPL-2.0-or-later",
+  "license": "MIT",
   "scripts": {
     "build": "node build.mjs",
     "notices": "node notices.mjs",
     "test": "node --test"
   },
   "dependencies": {
-    "@codemirror/commands": "6.11.1",
-    "@codemirror/language": "6.13.1",
-    "@codemirror/state": "6.7.6",
-    "@codemirror/view": "6.43.15",
-    "@lezer/highlight": "1.2.5",
-    "openscad-wasm-prebuilt": "1.2.0",
     "three": "0.187.0"
   },
   "devDependencies": {

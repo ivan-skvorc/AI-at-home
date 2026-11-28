@@ -3,128 +3,41 @@ import test from "node:test";
 
 import {
   appendOnly,
-  endedWithoutDraft,
-  isDraftSource,
-  isEngineFailure,
-  shouldRepair,
-  shouldReport,
-  shouldRetrySave,
+  endedWithoutVersion,
+  pickVersion,
 } from "../ui/outcomes.js";
 
-test("engine and infrastructure failures are told apart from the file's own errors", () => {
-  for (const code of [
-    "load:integrity",
-    "load:network",
-    "worker",
-    "wasm",
-    "timeout",
-    "disposed",
-  ])
-    assert.equal(isEngineFailure(code), true, code);
-  for (const code of [
-    "Parser error in line 3",
-    "No top-level geometry",
-    null,
-    undefined,
-  ])
-    assert.equal(isEngineFailure(code), false, String(code));
+const run = (fields = {}) => ({
+  kind: "prompt",
+  stopped: false,
+  state: { error: null },
+  newestBefore: 2,
+  ...fields,
 });
 
-test("only a render that says something about the source is reported", () => {
-  const ok = { ok: true };
-  const bad = { ok: false, error: "Parser error" };
-  assert.equal(shouldReport({ render: null }, ok), true);
-  assert.equal(shouldReport({ render: null }, bad), true);
-  assert.equal(shouldReport({ render: { ok: true } }, ok), false);
-  assert.equal(shouldReport({ render: { ok: true } }, bad), false);
-  // A later good render replaces a stored failure, so Finalize is not blocked for good.
-  assert.equal(shouldReport({ render: { ok: false } }, ok), true);
-  assert.equal(shouldReport({ render: { ok: false } }, bad), false);
-  // The engine failing to load, crashing or running out of time says nothing about the file.
-  assert.equal(
-    shouldReport({ render: null }, { ok: false, engine: true }),
-    false,
-  );
-  assert.equal(shouldReport({ render: null }, { superseded: true }), false);
-  assert.equal(
-    shouldReport({ render: null }, { ok: false, error: "closed" }),
-    false,
-  );
-  assert.equal(shouldReport(null, ok), true);
+test("a prompt turn that made no new version folder says so", () => {
+  assert.equal(endedWithoutVersion(run(), 2), true);
+  assert.equal(endedWithoutVersion(run({ newestBefore: 0 }), 0), true);
+  assert.equal(endedWithoutVersion(run(), 3), false);
 });
 
-test("the automatic repair follows only a prompt run that ended on its own", () => {
-  const run = (extra = {}) => ({
-    kind: "prompt",
-    failedVersion: "v4",
-    stopped: false,
-    state: { error: null },
-    ...extra,
-  });
-  assert.equal(shouldRepair(run()), true);
-  assert.equal(shouldRepair(run({ stopped: true })), false);
-  assert.equal(shouldRepair(run({ state: { error: "interrupted" } })), false);
-  assert.equal(shouldRepair(run({ failedVersion: null })), false);
-  assert.equal(shouldRepair(run({ kind: "repair" })), false);
-  assert.equal(shouldRepair(run({ kind: "finalize" })), false);
+test("stopped, failed and resumed runs say nothing about versions", () => {
+  assert.equal(endedWithoutVersion(run({ stopped: true }), 2), false);
+  assert.equal(
+    endedWithoutVersion(run({ state: { error: "The run failed." } }), 2),
+    false,
+  );
+  assert.equal(endedWithoutVersion(run({ kind: "resume" }), 2), false);
+  assert.equal(endedWithoutVersion(null, 2), false);
 });
 
-test("a prompt or repair turn that saved no draft is told apart", () => {
-  const before = [{ id: "v1", source: "model" }];
-  const run = (extra = {}) => ({
-    kind: "prompt",
-    stopped: false,
-    state: { error: null },
-    known: new Set(["v1"]),
-    ...extra,
-  });
-  // The model answered (or built elsewhere) without scad_draft: the preview did not change.
-  assert.equal(endedWithoutDraft(run(), before), true);
-  assert.equal(endedWithoutDraft(run({ kind: "repair" }), before), true);
-  assert.equal(endedWithoutDraft(run(), []), true);
-  // A new model or repair version is a draft; a hand edit saved meanwhile is not.
-  assert.equal(
-    endedWithoutDraft(run(), [...before, { id: "v2", source: "model" }]),
-    false,
-  );
-  assert.equal(
-    endedWithoutDraft(run(), [...before, { id: "v2", source: "repair" }]),
-    false,
-  );
-  assert.equal(
-    endedWithoutDraft(run(), [...before, { id: "v2", source: "hand" }]),
-    true,
-  );
-  // A stopped or failed run already says why; finalize and a resumed run are not drafting turns.
-  assert.equal(endedWithoutDraft(run({ stopped: true }), before), false);
-  assert.equal(
-    endedWithoutDraft(run({ state: { error: "The run failed." } }), before),
-    false,
-  );
-  assert.equal(endedWithoutDraft(run({ kind: "finalize" }), before), false);
-  assert.equal(endedWithoutDraft(run({ kind: "resume" }), before), false);
-});
-
-test("model and repair drafts are both the model's", () => {
-  assert.equal(isDraftSource("model"), true);
-  assert.equal(isDraftSource("repair"), true);
-  assert.equal(isDraftSource("hand"), false);
-  assert.equal(isDraftSource("slider"), false);
-});
-
-test("a failed save is not retried until the source changes", () => {
-  assert.equal(
-    shouldRetrySave({ now: "a", attempted: "a", running: false }),
-    false,
-  );
-  assert.equal(
-    shouldRetrySave({ now: "ab", attempted: "a", running: false }),
-    true,
-  );
-  assert.equal(
-    shouldRetrySave({ now: "ab", attempted: "a", running: true }),
-    false,
-  );
+test("the newest version shows unless the user picked an older one that still exists", () => {
+  assert.equal(pickVersion([]), null);
+  assert.equal(pickVersion([1, 2, 3]), 3);
+  assert.equal(pickVersion([1, 2, 3], { selected: 1, follow: true }), 3);
+  assert.equal(pickVersion([1, 2, 3], { selected: 1, follow: false }), 1);
+  assert.equal(pickVersion([2, 3], { selected: 1, follow: false }), 3);
+  assert.equal(pickVersion([1, 2], { selected: null, follow: false }), 2);
 });
 
 test("new messages are appended to the ones already shown", () => {

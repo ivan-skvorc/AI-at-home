@@ -42,10 +42,11 @@ function edgesOf(model) {
 }
 
 /**
- * One WebGL context for the life of the design view. Models (prepared by
- * cad-preview's mesh.js: millimetres, Y up) replace the geometry in place; the
- * canvas, renderer and camera stay. Frames are drawn on demand only.
- * `viewport` is the element the canvas fills; `probe` resolves theme colours.
+ * One WebGL context for the life of the design view. Each body (a model
+ * prepared by cad-preview's mesh.js: millimetres, Y up) is one mesh with its
+ * edges and its own colour, kept by name: a new model for a body replaces its
+ * geometry in place, and the canvas, renderer and camera stay. Frames are
+ * drawn on demand only.
  */
 export function createViewer(viewport, { label, onLost }) {
   viewport.tabIndex = 0;
@@ -54,30 +55,14 @@ export function createViewer(viewport, { label, onLost }) {
   probe.style.display = "none";
   viewport.append(probe);
 
-  const material = new MeshStandardMaterial({
-    roughness: 0.65,
-    metalness: 0.05,
-    side: DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-    transparent: true,
-  });
-  const finalMaterial = material.clone();
   const edgeMaterial = new LineBasicMaterial({
     transparent: true,
     opacity: 0.7,
   });
-  const draft = new Mesh(new BufferGeometry(), material);
-  const draftEdges = new LineSegments(new BufferGeometry(), edgeMaterial);
-  const final = new Mesh(new BufferGeometry(), finalMaterial);
-  const finalEdges = new LineSegments(new BufferGeometry(), edgeMaterial);
-  const draftGroup = new Object3D();
-  draftGroup.add(draft, draftEdges);
-  const finalGroup = new Object3D();
-  finalGroup.add(final, finalEdges);
+  /** name -> { group, mesh, edges, material, model } */
+  const bodies = new Map();
   const scene = new Scene();
-  scene.add(draftGroup, finalGroup, new HemisphereLight(0xffffff, 0x8a8a8a, 2));
+  scene.add(new HemisphereLight(0xffffff, 0x8a8a8a, 2));
   const camera = new PerspectiveCamera(30, 1, 0.1, 1000);
   const headlight = new DirectionalLight(0xffffff, 1.4);
   const aim = new Object3D();
@@ -87,9 +72,6 @@ export function createViewer(viewport, { label, onLost }) {
   camera.add(headlight, aim);
   scene.add(camera);
 
-  let draftModel = null;
-  let finalModel = null;
-  let compare = "draft";
   let renderer = null;
   let controls = null;
   let canvas = null;
@@ -111,17 +93,9 @@ export function createViewer(viewport, { label, onLost }) {
     paint.fillRect(0, 0, 1, 1);
     return [...paint.getImageData(0, 0, 1, 1).data.slice(0, 3)];
   };
-  const setColor = (target, rgb) =>
-    target.color.setRGB(
-      rgb[0] / 255,
-      rgb[1] / 255,
-      rgb[2] / 255,
-      SRGBColorSpace,
-    );
   const applyTheme = () => {
-    setColor(edgeMaterial, resolve("--foreground", "#202020"));
-    setColor(material, resolve("--muted-foreground", "#8a8a8a"));
-    setColor(finalMaterial, resolve("--primary", "#4a6fd0"));
+    const [r, g, b] = resolve("--foreground", "#202020");
+    edgeMaterial.color.setRGB(r / 255, g / 255, b / 255, SRGBColorSpace);
     requestRender();
   };
 
@@ -136,13 +110,10 @@ export function createViewer(viewport, { label, onLost }) {
   const box = () => {
     const min = new Vector3(Infinity, Infinity, Infinity);
     const max = new Vector3(-Infinity, -Infinity, -Infinity);
-    for (const [group, model] of [
-      [draftGroup, draftModel],
-      [finalGroup, finalModel],
-    ]) {
-      if (!model || !group.visible) continue;
-      min.min(new Vector3(...model.box.min).add(group.position));
-      max.max(new Vector3(...model.box.max).add(group.position));
+    for (const body of bodies.values()) {
+      if (!body.model || !body.group.visible) continue;
+      min.min(new Vector3(...body.model.box.min));
+      max.max(new Vector3(...body.model.box.max));
     }
     return Number.isFinite(min.x) ? { min, max } : null;
   };
@@ -239,27 +210,11 @@ export function createViewer(viewport, { label, onLost }) {
     resizeObserver.observe(viewport);
   };
 
-  const layout = () => {
-    draftGroup.visible = !!draftModel && compare !== "final";
-    finalGroup.visible = !!finalModel && compare !== "draft";
-    finalGroup.position.set(0, 0, 0);
-    if (draftModel && finalModel && compare === "both") {
-      // Side by side along X with the bottoms and backs aligned.
-      const gap =
-        Math.max(draftModel.box.max[0] - draftModel.box.min[0], 1) * 0.2;
-      finalGroup.position.set(
-        draftModel.box.max[0] + gap - finalModel.box.min[0],
-        draftModel.box.min[1] - finalModel.box.min[1],
-        draftModel.box.min[2] - finalModel.box.min[2],
-      );
-    }
-  };
-
-  const swap = (mesh, edges, model) => {
-    const previous = [mesh.geometry, edges.geometry];
-    mesh.geometry = model ? geometryOf(model) : new BufferGeometry();
-    edges.geometry = model ? edgesOf(model) : new BufferGeometry();
-    for (const geometry of previous) geometry.dispose();
+  const release = (body) => {
+    scene.remove(body.group);
+    body.mesh.geometry.dispose();
+    body.edges.geometry.dispose();
+    body.material.dispose();
   };
 
   const resizeObserver = new ResizeObserver(onResize);
@@ -272,40 +227,60 @@ export function createViewer(viewport, { label, onLost }) {
   scheme.addEventListener("change", applyTheme);
 
   return {
-    /** Show a draft model in place of the last; `partial` dims it while the code streams. */
-    setDraft(model, { partial = false } = {}) {
+    /** Show `model` as body `name` in `color`, replacing that body's last model. */
+    setBody(name, model, { color = "#8a8a8a", visible = true } = {}) {
       ensureRenderer();
-      draftModel = model;
-      swap(draft, draftEdges, model);
-      material.opacity = partial ? 0.55 : 1;
-      material.depthWrite = !partial;
-      layout();
-      if (model && (!userMoved || outgrown())) fit();
+      let body = bodies.get(name);
+      if (!body) {
+        const material = new MeshStandardMaterial({
+          roughness: 0.65,
+          metalness: 0.05,
+          side: DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
+        });
+        const mesh = new Mesh(new BufferGeometry(), material);
+        const edges = new LineSegments(new BufferGeometry(), edgeMaterial);
+        const group = new Object3D();
+        group.add(mesh, edges);
+        scene.add(group);
+        body = { group, mesh, edges, material, model: null };
+        bodies.set(name, body);
+      }
+      body.material.color.set(color);
+      const previous = [body.mesh.geometry, body.edges.geometry];
+      body.mesh.geometry = geometryOf(model);
+      body.edges.geometry = edgesOf(model);
+      for (const geometry of previous) geometry.dispose();
+      body.model = model;
+      body.group.visible = visible;
+      if (!userMoved || outgrown()) fit();
       requestRender();
     },
-    setFinal(model) {
-      ensureRenderer();
-      finalModel = model;
-      swap(final, finalEdges, model);
-      layout();
+    setVisible(name, visible) {
+      const body = bodies.get(name);
+      if (!body) return;
+      body.group.visible = visible;
       requestRender();
     },
-    setCompare(mode) {
-      compare = mode;
-      layout();
-      fit();
+    /** Drop every body whose name is not in `names`. */
+    keep(names) {
+      const wanted = new Set(names);
+      for (const [name, body] of bodies)
+        if (!wanted.has(name)) {
+          release(body);
+          bodies.delete(name);
+        }
+      requestRender();
     },
-    hasDraft: () => !!draftModel,
     fit: (direction) => fit(direction),
-    /** Forget the camera so the next model is framed afresh (a different design). */
+    /** Forget the bodies and the camera so the next design is framed afresh. */
     reset() {
       userMoved = false;
       fittedBox = null;
-      draftModel = finalModel = null;
-      swap(draft, draftEdges, null);
-      swap(final, finalEdges, null);
-      compare = "draft";
-      layout();
+      for (const body of bodies.values()) release(body);
+      bodies.clear();
       requestRender();
     },
     resize: onResize,
@@ -320,10 +295,8 @@ export function createViewer(viewport, { label, onLost }) {
         controls.stopListenToKeyEvents();
         controls.dispose();
       }
-      for (const object of [draft, draftEdges, final, finalEdges])
-        object.geometry.dispose();
-      material.dispose();
-      finalMaterial.dispose();
+      for (const body of bodies.values()) release(body);
+      bodies.clear();
       edgeMaterial.dispose();
       if (renderer) {
         canvas.removeEventListener("webglcontextlost", onContextLost);

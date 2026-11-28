@@ -197,7 +197,7 @@ class TestCatalogFilter:
     def test_the_local_extension_group_survives_and_the_plugin_default_does_not(self):
         from deerflow.tools.internet_access import LOCAL_EXTENSION_TOOL_GROUP
 
-        # A named group for extension tools that run on this machine (FORK.md §51).
+        # A named group for extension tools that run on this machine (FORK.md §27).
         # The plugin default stays unclassified: an extension tool is assumed to
         # reach the internet until its author says otherwise.
         assert LOCAL_EXTENSION_TOOL_GROUP == "local_extensions"

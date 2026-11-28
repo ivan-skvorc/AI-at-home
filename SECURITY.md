@@ -37,99 +37,30 @@ is treated as a potential credential-exposure path rather than as plain data:
 For redacted diagnostics intended for sharing, use `make support-bundle`, which
 is built for that purpose — not a backup archive.
 
-## The CAD module's script interpreter (fork feature)
+## Where model-written CAD code runs (fork feature)
 
-The bundled CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
-a CadQuery script written by a language model. Model text is untrusted input,
-and the default install gives the agent no shell on purpose, so the extension
-does not run the script. Its interpreter is a security boundary and is described
-here as one.
+The CAD design page and the `cad-modeling` skill (FORK.md §58) have the model
+write OpenSCAD and run Python scripts. That code is untrusted input, and the
+boundary is where it runs:
 
-- **The script is read, never executed.** It is parsed into a syntax tree. A
-  whitelist of node types is checked before anything is evaluated; every other
-  construct is refused with its line: imports other than `import cadquery as cq`
-  and `import math`, attribute access outside the numbers table below, any call
-  other than `cq.Workplane(...)`, `cq.Wire.makeHelix(...)`, an allow-listed
-  method, the numbers table and `show_object(name)` (read only as naming the
-  result), definitions, `while`,
-  branches, comparisons, comprehensions other than a list comprehension with one
-  `for` and no `if`, f-strings, slices. No code object is ever
-  made from script text: `ast.parse` (CPython's `compile()` with the flag that
-  stops at the syntax tree) is its one reader, and `exec` and `eval` never
-  receive it.
-- **A `for` loop is unrolled by the reader, not run.** It may run over
-  `range(...)` of whole numbers the reader has already checked, or over a list
-  of numbers or points the script states, so what it runs over is known in full
-  before its first pass. The reader goes through the body once per pass and
-  produces the same flat list of allow-listed operations the statements written
-  out would give; a test compares the two. `range` is the reader's own call on
-  those numbers and is not a name a script can assign or use as a value.
-- **Numbers are computed by the reader, from a closed table** (`allowlist.py`,
-  "Numbers"). `import math` gives `math.pi`, `math.tau` and thirteen functions,
-  and `abs`, `min`, `max`, `round`, `int`, `float` and `len` take numbers and
-  lists the script states. The reader computes each with its own function on
-  numbers it has already checked: no name is looked up on a module, so
-  `math.system`, `math.__dict__` and `getattr(math, ...)` are refused, and no
-  script can assign a name of the table. A result that is not finite, is over
-  the magnitude cap or is outside a function's domain is refused with its line;
-  `round` keeps at most 15 digits, since rounding a whole number to thousands
-  of places computes a power of ten that large. An index (`p[0]`) is a whole
-  number the reader knows and inside its list; slices are refused. A list
-  comprehension runs over a range or a list the script states, is unrolled like
-  a loop, makes a list of numbers or points and never an operation, and each of
-  its items counts toward the reading work below.
-- **The allow-list is data** (`allowlist.py`): method names with the kind of
-  each argument. No parameter that takes a file path, a callable, a font or a
-  raw kernel object is on it. The one attribute lookup a script can cause is for
-  a name that is a key of that table.
-- **The lettering font is the module's, never the script's.** `text` is on the
-  allow-list without its `font` and `fontPath` parameters: `build.py` passes the
-  path of the font file shipped in the package (`fonts/`, SIL OFL 1.1), and a
-  script that names a font or a path is refused. A missing font file fails the
-  build rather than letting the kernel fall back to a font of the host. The
-  lettering is at most 64 plain ASCII characters, each counted in the reading
-  work.
-- **One constructor on `cq` besides `cq.Workplane`: `cq.Wire.makeHelix`.** It
-  takes three lengths and, by name, `lefthand`, at most 200 turns; the reader
-  keeps them as data, and `build.py` makes the wire. Only `sweep`'s path takes a
-  helix: as any other argument, in a list, in arithmetic or with a method it is
-  refused, and so is any other name on `cq.Wire` or on `cq`. A thread swept
-  along it is bounded like every build, by the parent's wall clock and the
-  child's limits.
-- **Reading and building happen in a child process**, started in isolated mode
-  in an empty temporary directory with an environment that carries no Gateway
-  credentials. The Gateway process neither parses the script nor loads the
-  geometry kernel. The parent enforces a wall clock and kills the process group;
-  the child sets memory, CPU and file-size limits where the operating system
-  offers them.
-- **Resource use is bounded before the kernel starts**: script size, syntax
-  nodes, nesting, number magnitude, exponent size, pattern instances, loop
-  passes (1,000 in a script, nested four deep), operations after unrolling
-  (300) and the statements and values read while unrolling (200,000, so
-  reading takes under a second whatever a loop repeats). What an
-  accepted script can still cost the kernel is stopped by the parent's wall
-  clock and the child's memory ceiling, not by the reading.
-- **The kept script reads the way it was read.** Control characters, line
-  separators and text-direction marks are refused anywhere in the text, so no
-  character changes where a line starts or the order it is drawn in. A script
-  holds one statement per line, a loop's body is indented as one block under
-  its `for` (a backslash cannot carry a line into a loop from the margin), a
-  line is indented at most 80 columns with a tab counted as eight, and padding that pushes code out of sight is
-  refused (more than 40 blanks in a row inside a line, more than 40 blank lines
-  in a row). Other invisible characters, such as the joiners of Persian and
-  Hindi, can occur only in a comment, where they start no line and no
-  statement. A line may be up to 1,000 characters long: what a viewer shows of
-  a long line is the viewer's choice.
-
-What it is not: a sandbox for the geometry kernel. A defect in the kernel that
-an allow-listed operation can reach is contained by the child process and its
-limits, not by the interpreter. The extension ships with this fork, installed
-and enabled (`make extension-disable NAME=cad` turns it off); like any extension
-it runs with Gateway privileges, and its files are written through the
-host's bounded writer (`ToolContext.write_output`), into the calling
-conversation only.
-
-A change that widens the allow-list, adds a string parameter, or lets any value
-from a script reach `getattr`, a file path or a subprocess argument is a change
-to this boundary and needs its own review. `tests/test_interpreter.py` in the
-package holds the refused constructs; a new one belongs there.
+- **Only in the per-thread sandbox container.** The skill's `cadkit.py`, OpenSCAD,
+  the slicer and CadQuery run inside the conversation's own AIO container
+  (`make sandbox-enable MODE=container IMAGE=cad`), under the container's usual
+  hardening: all capabilities dropped but the image's startup set,
+  `no-new-privileges`, memory and process limits, and the sandbox API published
+  on loopback for a local run. Seccomp is unconfined by default because the
+  image's browser needs it (`DEER_FLOW_SANDBOX_SECCOMP_PROFILE` narrows it). CAD
+  adds no GPU, no capability and no published port. The container's network is
+  the sandbox's own, as for any shell command the agent runs.
+- **The Gateway executes nothing.** The design page's backend stores titles and
+  starts runs; it renders, parses and checks no design file. Without container
+  mode the page shows the setup commands and a design run is told to stop. A
+  Gateway-side render, check or interpreter route would break this boundary; the
+  CAD module that interpreted an allow-list of CadQuery operations in the Gateway
+  was removed (FORK.md §51).
+- **Mesh files reach the browser only through cad-preview's capped parsers.** The
+  page lists and reads the version folders through the host's owner-checked
+  thread file routes, outputs only, and parses each body's STL in a Worker with
+  the CAD model preview's parser, which checks every count against fixed caps
+  before allocating (FORK.md §56); the preview itself does the same for STL and
+  GLB in the artifact panel. JSON reports are shown as text, never as HTML.

@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-24, level 1, "CAD design drafts render over plain http"
+Synced by change cycle: 2026-11-28, level 1, "CAD in the container: OpenSCAD, cadkit checks and the CAD sandbox image; cad_build removed"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
@@ -12,7 +12,7 @@ index.
 | [Chat and the agent loop](chat-and-agent.md) | 19 |
 | [Models and cost](models-and-cost.md) | 11 |
 | [Sidebar and workspace](sidebar-and-workspace.md) | 19 |
-| [Generation, media and documents](generation-and-media.md) | 7 |
+| [Generation, media and documents](generation-and-media.md) | 6 |
 | [Tools, skills and integrations](integrations-and-channels.md) | 18 |
 | [Install, run and operate](ops-and-install.md) | 10 |
 
@@ -142,13 +142,10 @@ flowchart LR
 | `backend/samples/**` | Long-term memory |
 | `backend/scripts/**` | none (dev tooling) |
 | `backend/scripts/benchmark/drift_eval/**` | Big documents on small models |
-| `backend/scripts/benchmark/cad_eval/**` | CAD parts from a chat |
-| `backend/scripts/benchmark/cad_eval/design_path.py` | CAD parts from a chat, CAD design page |
 | `backend/scripts/migrate_*.py` | Install and configure |
 | `backend/packages/harness/pyproject.toml` | ALL |
 | `backend/packages/extension-api/pyproject.toml` | ALL |
 | `backend/packages/extension-api/**` | Extensions and plugins |
-| `backend/extensions/sources/deerflow-extension-cad/**` | CAD parts from a chat |
 | `backend/extensions/sources/deerflow-extension-cad-preview/**` | CAD model preview |
 | `backend/extensions/sources/deerflow-extension-cad-design/**` | CAD design page |
 | `backend/extensions/sources/deerflow-extension-workflows/**` | Plus Ultracode |
@@ -720,6 +717,7 @@ flowchart LR
 | `frontend/src/typings/**` | ALL |
 | `frontend/src/version.ts` | ALL |
 | `docker/**` | Run the stack |
+| `docker/sandbox-cad/**` | CAD design page |
 | `docker/docker-compose.cli-auth.yaml` | Model providers |
 | `docker/docker-compose.comfyui.yml` | Local image and video generation |
 | `docker/docker-compose.dood.yaml` | Sandbox and file tools |
@@ -769,7 +767,7 @@ flowchart LR
 | `scripts/load_memory_sample.py` | Long-term memory |
 | `scripts/sandbox-*.sh` | Sandbox and file tools |
 | `scripts/sandbox-mode.sh` | Sandbox and file tools, Run the stack |
-| `scripts/sandbox_toggle.py` | Sandbox and file tools |
+| `scripts/sandbox_toggle.py` | Sandbox and file tools, CAD design page |
 | `scripts/setup-sandbox.sh` | Sandbox and file tools |
 | `scripts/setup_wizard.py` | Install and configure |
 | `scripts/wizard/**` | Install and configure |
@@ -785,7 +783,7 @@ flowchart LR
 | `skills/public/podcast-generation/**` | Media generation skills |
 | `skills/public/ppt-generation/**` | Media generation skills |
 | `skills/public/video-generation/**` | Media generation skills |
-| `skills/public/cad-modeling/**` | CAD parts from a chat |
+| `skills/public/cad-modeling/**` | CAD design page |
 | `skills/public/repo-runner/**` | Sandbox and file tools |
 | `skills/public/find-skills/**` | Create and review skills |
 | `skills/public/skill-creator/**` | Create and review skills |
@@ -800,7 +798,6 @@ flowchart LR
 | `skills/public/git-pr-workflow/**` | Git and pull-request workflow |
 | `examples/**` | Extensions and plugins |
 | `examples/deerflow-extension-agent-teams/**` | Custom agents |
-| `examples/deerflow-extension-cad/**` | CAD parts from a chat |
 | `examples/deerflow-extension-cad-preview/**` | CAD model preview |
 | `examples/deerflow-extension-cad-design/**` | CAD design page |
 | `examples/deerflow-extension-knowledge/**` | Knowledge retrieval |

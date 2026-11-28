@@ -2,22 +2,27 @@
 
 Runs go through the host's AgentRuns handle, so the host checks thread
 ownership again and stamps the input messages as this plugin's. A design run
-carries ``plugin_options["cad-design"] = {design_id, head, phase}``; that flag
-is what turns the drafting tool and the design brief on (middleware.py).
+carries ``plugin_options["cad-design"] = {design_id}``; that flag is what turns
+the design brief on (middleware.py).
+
+Nothing here reads or writes the design's files: the model renders them in the
+run's container, and the page lists and reads them through the host's thread
+file routes. ``container`` tells the page whether this host runs those
+containers at all (``HostPolicySnapshot.sandbox_container``, API 0.2.15).
 """
 
 from __future__ import annotations
 
 import asyncio
-import math
+import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from deerflow_extension_api import AgentRunError
+from deerflow_extension_api import PLUGIN_OPTIONS_CONTEXT_KEY, AgentRunError
 
-from .constants import CAD_BUILD_TOOL, ID, NAMESPACE, RUN_ID, SCAD_DRAFT_TOOL
-from .notes import MODEL_SOURCES, hand_edits
+from .constants import FOLDER, ID, NAMESPACE, RUN_ID
+from .notes import VIEWING_SUFFIX
 from .store import Conflict, NotFound, Store, clean_title, new_id
 
 ACTIVE = frozenset({"pending", "running"})
@@ -25,17 +30,159 @@ STREAM_MODE = ["values", "messages-tuple"]
 MAX_PROMPT_CHARS = 8000
 MAX_MESSAGES = 200
 MAX_MESSAGE_CHARS = 20000
-MAX_ARG_CHARS = 4000
-#: get_design returns sources newest first up to this many bytes; older ones come from get_version.
-DESIGN_SOURCE_BYTES = 2 * 1024 * 1024
+#: A tool result is output the user skims (a cadkit summary, a file read): the page shows its start.
+MAX_TOOL_CHARS = 4000
+#: A tool call is shown as its name and one line of its arguments.
+MAX_SUMMARY_CHARS = 200
+#: The argument that says best what a call does, in order: a bash command, a file, the files presented.
+SUMMARY_KEYS = ("command", "path", "image_path", "filepaths", "description")
+MAX_VERSION = 100_000
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:/@+-]{1,128}")
-PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-MAX_PARAMS = 100
-REPAIR_MESSAGE = "The last render of draft v{seq} failed; the version note says where. Fix the file and save the whole corrected file with scad_draft once."
-FINALIZE_MESSAGE = "Finalize draft v{seq}: port this OpenSCAD file to CadQuery and build it with cad_build.\n\n```openscad\n{scad}\n```"
-WRITTEN_SUFFIX = "\n\nThe current file, written by the user; build on it:\n\n```openscad\n{scad}\n```"
-EDITED_SUFFIX = "\n\nThe current file, edited by hand since your last version:\n\n```openscad\n{scad}\n```"
-TOOL_NAMES = {SCAD_DRAFT_TOOL: "scad_draft", CAD_BUILD_TOOL: "cad_build"}
+
+# -- the run context the page sends -----------------------------------------------
+#
+# The page sends what the main chat sends for the model and mode the user chose
+# (the host's composer controls, ``runContext()``). These keys are all it may set;
+# anything else is dropped. The Gateway applies its own rules to the run as to
+# any chat run: the model allowlist and ``model:use``, the reasoning contract,
+# the subagent clamps and its ``plugin_options`` bounds.
+
+RUN_MODES = frozenset({"flash", "thinking", "pro", "ultra", "democracy", "ultracode", "double_ultracode"})
+#: Effort values are each model's own vocabulary (a contract may add ``max`` or
+#: ``xhigh``), so the check is the config's token pattern for them.
+EFFORT = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+DEMOCRACY_GRADINGS = frozenset({"five_point", "boolean"})
+#: The host's clamps (``deerflow.config.subagents_config``).
+MAX_TOTAL_SUBAGENTS = 50
+MAX_CONCURRENT_SUBAGENTS = 64
+#: A Democracy panel's size, as the chat's setup allows it.
+DEMOCRACY_PARTICIPANTS = (2, 12)
+#: The Gateway's bounds for ``plugin_options`` (``sanitize_plugin_options``).
+PLUGIN_OPTIONS_MAX_NAMESPACES = 8
+PLUGIN_OPTIONS_MAX_BYTES = 4096
+
+
+def _model_name(key: str) -> Callable[[Any], str]:
+    def check(value: Any) -> str:
+        if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
+            raise ValueError(f"invalid {key}")
+        return value
+
+    return check
+
+
+def _flag(key: str) -> Callable[[Any], bool]:
+    def check(value: Any) -> bool:
+        if type(value) is not bool:
+            raise ValueError(f"{key} must be true or false")
+        return value
+
+    return check
+
+
+def _count(key: str, ceiling: int) -> Callable[[Any], int]:
+    def check(value: Any) -> int:
+        if type(value) is not int or not 1 <= value <= ceiling:
+            raise ValueError(f"{key} must be a whole number from 1 to {ceiling}")
+        return value
+
+    return check
+
+
+def _choice(key: str, choices: frozenset[str]) -> Callable[[Any], str]:
+    def check(value: Any) -> str:
+        # A list or object is not hashable: refuse it as a bad value (422), not a server error.
+        if not isinstance(value, str) or value not in choices:
+            raise ValueError(f"{key} must be one of {sorted(choices)}")
+        return value
+
+    return check
+
+
+def _effort(value: Any) -> str:
+    if not isinstance(value, str) or not EFFORT.fullmatch(value):
+        raise ValueError("invalid reasoning_effort")
+    return value
+
+
+def _participants(value: Any) -> list[str]:
+    low, high = DEMOCRACY_PARTICIPANTS
+    if not isinstance(value, list) or not low <= len(value) <= high:
+        raise ValueError(f"democracy_participants must list {low} to {high} models")
+    names = [_model_name("democracy_participants")(name) for name in value]
+    if len(set(names)) != len(names):
+        raise ValueError("democracy_participants must not repeat a model")
+    return names
+
+
+def _plugin_options(value: Any) -> dict[str, dict[str, Any]]:
+    """Other plugins' per-run options (Plus Ultracode's, for one), as plain JSON."""
+    if not isinstance(value, Mapping) or len(value) > PLUGIN_OPTIONS_MAX_NAMESPACES:
+        raise ValueError(f"plugin_options must be an object of at most {PLUGIN_OPTIONS_MAX_NAMESPACES} namespaces")
+    for namespace, options in value.items():
+        if not isinstance(namespace, str) or not 1 <= len(namespace) <= 96 or ":" in namespace or not isinstance(options, Mapping):
+            raise ValueError("plugin_options must map plugin namespaces to objects")
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError):
+        raise ValueError("plugin_options must hold JSON values only") from None
+
+
+RUN_CONTEXT_KEYS: dict[str, Callable[[Any], Any]] = {
+    "model_name": _model_name("model_name"),
+    "mode": _choice("mode", RUN_MODES),
+    "thinking_enabled": _flag("thinking_enabled"),
+    "is_plan_mode": _flag("is_plan_mode"),
+    "subagent_enabled": _flag("subagent_enabled"),
+    "reasoning_effort": _effort,
+    "subagent_model_name": _model_name("subagent_model_name"),
+    "max_total_subagents": _count("max_total_subagents", MAX_TOTAL_SUBAGENTS),
+    "max_concurrent_subagents": _count("max_concurrent_subagents", MAX_CONCURRENT_SUBAGENTS),
+    "democracy_participants": _participants,
+    "democracy_grading": _choice("democracy_grading", DEMOCRACY_GRADINGS),
+    PLUGIN_OPTIONS_CONTEXT_KEY: _plugin_options,
+}
+
+
+def design_run_context(raw: Any, design_id: str) -> dict[str, Any]:
+    """The run's context: the page's allowed keys, checked, and this design's flag.
+
+    A key the page leaves out, or sends as ``null``, is the server's default.
+    The ``cad-design`` entry of ``plugin_options`` is always this design's, set
+    after the page's entries are merged, so a page cannot point a run at another
+    design. Like the chat, a subagent model rides only on a run that delegates.
+    """
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("context must be an object")
+    context = {key: check(raw[key]) for key, check in RUN_CONTEXT_KEYS.items() if raw.get(key) is not None}
+    if context.get("subagent_enabled") is not True:
+        context.pop("subagent_model_name", None)
+    options = context.pop(PLUGIN_OPTIONS_CONTEXT_KEY, {})
+    options[NAMESPACE] = {"design_id": design_id}
+    if len(options) > PLUGIN_OPTIONS_MAX_NAMESPACES or len(json.dumps(options, ensure_ascii=False).encode()) > PLUGIN_OPTIONS_MAX_BYTES:
+        raise ValueError(f"plugin_options must stay within {PLUGIN_OPTIONS_MAX_NAMESPACES} namespaces and {PLUGIN_OPTIONS_MAX_BYTES} bytes")
+    context[PLUGIN_OPTIONS_CONTEXT_KEY] = options
+    return context
+
+
+class HostSandbox:
+    """The host's sandbox mode, as the Gateway projects it at start (an ExtensionService).
+
+    ``sandbox`` is startup-only configuration, so the value read once at start
+    holds until the Gateway restarts. Before start, and on a host older than
+    API 0.2.15, it reads False.
+    """
+
+    def __init__(self) -> None:
+        self.container = False
+
+    async def start(self, deps: Any) -> None:
+        self.container = getattr(getattr(deps, "policy", None), "sandbox_container", False) is True
+
+    async def stop(self) -> None:
+        return None
 
 
 def _id(payload: Mapping[str, Any], key: str) -> str:
@@ -52,59 +199,13 @@ def _run_id(payload: Mapping[str, Any]) -> str:
     return value
 
 
-def _finite(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def _triple(value: Any) -> list[float]:
-    if not isinstance(value, list) or len(value) != 3 or not all(_finite(item) for item in value):
-        raise ValueError("expected three numbers")
-    return [float(item) for item in value]
-
-
-def clean_render(render: Any) -> dict[str, Any]:
-    """A final render result from the page; partial (live) renders are never stored."""
-    if not isinstance(render, Mapping) or type(render.get("ok")) is not bool:
-        raise ValueError("render needs ok")
-    allowed = {"ok", "partial", "error", "error_lines", "bbox_mm", "bbox_min_mm", "bbox_max_mm", "volume_mm3", "manifold", "triangles", "ms"}
-    if set(render) - allowed or render.get("partial", False) is not False:
-        raise ValueError("unknown or partial render")
-    clean: dict[str, Any] = {"ok": render["ok"], "partial": False}
-    if "error" in render:
-        if not isinstance(render["error"], str):
-            raise ValueError("error must be text")
-        clean["error"] = render["error"][:4000]
-    if "error_lines" in render:
-        lines = render["error_lines"]
-        if not isinstance(lines, list) or not all(type(line) is int and line >= 0 for line in lines):
-            raise ValueError("error_lines must be line numbers")
-        clean["error_lines"] = lines[:50]
-    for key in ("bbox_mm", "bbox_min_mm", "bbox_max_mm"):
-        if key in render:
-            clean[key] = _triple(render[key])
-    if "volume_mm3" in render:
-        if not _finite(render["volume_mm3"]):
-            raise ValueError("volume must be a number")
-        clean["volume_mm3"] = float(render["volume_mm3"])
-    if "manifold" in render:
-        if type(render["manifold"]) is not bool:
-            raise ValueError("manifold must be boolean")
-        clean["manifold"] = render["manifold"]
-    for key in ("triangles", "ms"):
-        if key in render:
-            if type(render[key]) is not int or render[key] < 0:
-                raise ValueError(f"{key} must be a count")
-            clean[key] = render[key]
-    return clean
-
-
-def clean_params(params: Any) -> dict[str, Any]:
-    if not isinstance(params, Mapping) or len(params) > MAX_PARAMS:
-        raise ValueError("params must be an object of at most 100 values")
-    for name, value in params.items():
-        if not isinstance(name, str) or not PARAM_NAME.fullmatch(name) or not (type(value) is bool or _finite(value)):
-            raise ValueError("params map names to numbers or booleans")
-    return dict(params)
+def _version(payload: Mapping[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= MAX_VERSION:
+        raise ValueError(f"{key} must be a version number")
+    return value
 
 
 def _text(content: Any) -> str:
@@ -115,14 +216,33 @@ def _text(content: Any) -> str:
     return ""
 
 
-def _bounded(value: Any) -> Any:
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _line(value: Any) -> str:
     if isinstance(value, str):
-        return value if len(value) <= MAX_ARG_CHARS else value[:MAX_ARG_CHARS] + "..."
-    if isinstance(value, Mapping):
-        return {str(key): _bounded(item) for key, item in value.items()}
+        lines = value.strip().splitlines()
+        return lines[0].strip() if lines else ""
     if isinstance(value, list):
-        return [_bounded(item) for item in value[:50]]
-    return value
+        names = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return ", ".join(names[:5]) + (f" (+{len(names) - 5} more)" if len(names) > 5 else "")
+    return ""
+
+
+def summarize_args(args: Any) -> str:
+    """One bounded line for a tool call: a bash command's first line, a path, else the first text argument."""
+    if not isinstance(args, Mapping):
+        return ""
+    for key in SUMMARY_KEYS:
+        line = _line(args.get(key))
+        if line:
+            return _cut(line, MAX_SUMMARY_CHARS)
+    for value in args.values():
+        line = _line(value)
+        if line:
+            return _cut(line, MAX_SUMMARY_CHARS)
+    return ""
 
 
 def simplify_messages(messages: Any) -> list[dict[str, Any]]:
@@ -137,19 +257,19 @@ def simplify_messages(messages: Any) -> list[dict[str, Any]]:
         if role is None or (isinstance(extra, Mapping) and extra.get("hide_from_ui")):
             continue
         text = _text(message.get("content"))
-        entry: dict[str, Any] = {"id": str(message.get("id") or ""), "role": role, "text": text[:MAX_MESSAGE_CHARS]}
+        entry: dict[str, Any] = {"id": str(message.get("id") or ""), "role": role, "text": _cut(text, MAX_TOOL_CHARS) if role == "tool" else text[:MAX_MESSAGE_CHARS]}
         if role == "assistant" and message.get("tool_calls"):
-            entry["tool_calls"] = [{"name": TOOL_NAMES.get(call.get("name"), call.get("name")), "args": _bounded(call.get("args") or {})} for call in message["tool_calls"] if isinstance(call, Mapping)]
+            entry["tool_calls"] = [{"name": str(call.get("name") or ""), "summary": summarize_args(call.get("args"))} for call in message["tool_calls"] if isinstance(call, Mapping)]
         if role == "tool":
-            entry["tool_name"] = TOOL_NAMES.get(message.get("name"), message.get("name"))
+            entry["tool_name"] = str(message.get("name") or "")
         shown.append(entry)
     return shown[-MAX_MESSAGES:]
 
 
 class Designs:
-    def __init__(self, store: Store, max_source_bytes: int):
+    def __init__(self, store: Store, sandbox: HostSandbox):
         self.store = store
-        self.max_source_bytes = max_source_bytes
+        self.sandbox = sandbox
 
     # -- helpers ---------------------------------------------------------------
 
@@ -174,45 +294,6 @@ class Designs:
             raise AgentRunError(503, "Design runs need a signed-in browser session")
         return context.agent_runs
 
-    def _source(self, value: Any) -> str:
-        if not isinstance(value, str) or len(value.encode("utf-8")) > self.max_source_bytes:
-            raise ValueError("scad must be text within max_source_bytes")
-        return value
-
-    async def _idle(self, context: Any, design: Mapping[str, Any]) -> None:
-        """Refuse while the design's last run is still going (its tool would race the edit)."""
-        if not design.get("run_id") or context.agent_runs is None:
-            return
-        try:
-            run = await context.agent_runs.get(thread_id=design["thread_id"], run_id=design["run_id"])
-        except AgentRunError as exc:
-            if exc.status_code == 404:
-                return
-            raise
-        if run.status in ACTIVE:
-            raise AgentRunError(409, "A run is active on this design; wait for it or stop it")
-
-    async def _start(self, context: Any, owner: str, design: Mapping[str, Any], text: str, phase: str, head: str | None, payload: Mapping[str, Any]):
-        runs = self._runs(context)
-        run_context: dict[str, Any] = {"plugin_options": {NAMESPACE: {"design_id": design["id"], "head": head, "phase": phase}}}
-        model_name = payload.get("model_name")
-        if model_name is not None:
-            if not isinstance(model_name, str) or not MODEL_NAME.fullmatch(model_name):
-                raise ValueError("invalid model_name")
-            run_context["model_name"] = model_name
-        mode = payload.get("mode", "flash")
-        if mode not in ("flash", "thinking"):
-            raise ValueError("mode must be flash or thinking")
-        run_context["thinking_enabled"] = mode == "thinking"
-        run = await runs.start(
-            thread_id=design["thread_id"],
-            input={"messages": [{"role": "user", "content": text}]},
-            context=run_context,
-            stream_mode=list(STREAM_MODE),
-        )
-        await self._call(self.store.set_run, owner, design["id"], run.run_id)
-        return run
-
     # -- designs ---------------------------------------------------------------
 
     async def list_designs(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
@@ -220,7 +301,7 @@ class Designs:
         if type(trash) is not bool:
             raise ValueError("trash must be boolean")
         designs = await self._call(self.store.list_designs, self._owner(context), trash=trash)
-        return {"designs": [{"id": d["id"], "title": d["title"], "updated_at": d["updated_at"], "versions": d["versions"], "thumbnail": None, "deleted_at": d["deleted_at"]} for d in designs]}
+        return {"designs": [{key: d[key] for key in ("id", "title", "updated_at", "deleted_at")} for d in designs], "container": self.sandbox.container}
 
     async def create_design(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
         owner = self._owner(context)
@@ -242,22 +323,8 @@ class Designs:
         return {"design": design}
 
     async def get_design(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        owner = self._owner(context)
-        design_id = _id(payload, "design_id")
-        design = await self._call(self.store.get_design, owner, design_id)
-        versions = await self._call(self.store.versions, owner, design_id)
-        budget = DESIGN_SOURCE_BYTES
-        for version in reversed(versions):
-            size = len(version["scad"].encode("utf-8"))
-            if size > budget and version["id"] != design["head_version_id"]:
-                version["scad"] = None
-                version["scad_omitted"] = True
-            else:
-                budget -= size
-        return {"design": design, "versions": versions}
-
-    async def get_version(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        return {"version": await self._call(self.store.get_version, self._owner(context), _id(payload, "design_id"), _id(payload, "version_id"))}
+        design = await self._call(self.store.get_design, self._owner(context), _id(payload, "design_id"))
+        return {"design": design, "folder": FOLDER, "container": self.sandbox.container}
 
     async def rename_design(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
         if not isinstance(payload.get("title"), str):
@@ -271,7 +338,7 @@ class Designs:
         return {"design": await self._call(self.store.restore, self._owner(context), _id(payload, "design_id"))}
 
     async def purge_design(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        """Delete for good: the rows and the design's thread, which holds every prompt, draft and build file.
+        """Delete for good: the row and the design's thread, which holds every prompt and version folder.
 
         The thread is unlisted, so the user has no other place to delete it. It goes
         first: a refusal (work in flight) leaves the design in the Trash to try again.
@@ -287,89 +354,36 @@ class Designs:
         await self._call(self.store.purge, owner, design_id)
         return {"purged": True}
 
-    # -- versions --------------------------------------------------------------
-
-    async def save_version(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        owner = self._owner(context)
-        design_id = _id(payload, "design_id")
-        parent_id = _id(payload, "parent_id") if payload.get("parent_id") is not None else None
-        source = payload.get("source")
-        if source not in ("hand", "slider"):
-            raise ValueError("source must be hand or slider")
-        scad = self._source(payload.get("scad"))
-        params = clean_params(payload.get("params", {}))
-        design = await self._call(self.store.get_design, owner, design_id)
-        await self._idle(context, design)
-        version = await self._call(self.store.add_version, owner, design_id, parent_id=parent_id, source=source, scad=scad, params=params)
-        return {"version": version}
-
-    async def report_render(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        render = clean_render(payload.get("render"))
-        return {"version": await self._call(self.store.set_render, self._owner(context), _id(payload, "design_id"), _id(payload, "version_id"), render)}
-
-    async def set_head(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        return {"design": await self._call(self.store.set_head, self._owner(context), _id(payload, "design_id"), _id(payload, "version_id"))}
-
     # -- runs ------------------------------------------------------------------
 
     async def prompt(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
+        """Start a design run with the user's message.
+
+        ``viewing`` is the version the page shows and ``newest`` the newest it
+        listed, both optional. When the user looks at an older version (or the
+        page sends ``viewing`` alone), the message names it, so "make this one
+        taller" reaches the model with the version it means. ``context`` is the
+        run context of the model and mode the user chose (``design_run_context``).
+        """
         owner = self._owner(context)
         design_id = _id(payload, "design_id")
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_PROMPT_CHARS:
             raise ValueError(f"text must be 1 to {MAX_PROMPT_CHARS} characters")
+        viewing, newest = _version(payload, "viewing"), _version(payload, "newest")
+        if viewing is not None and newest is not None and viewing > newest:
+            raise ValueError("viewing must not be newer than newest")
+        if viewing is not None and (newest is None or viewing < newest):
+            text += VIEWING_SUFFIX.format(seq=viewing, folder=FOLDER)
+        run_context = design_run_context(payload.get("context"), design_id)
         design = await self._call(self.store.get_design, owner, design_id)
-        versions = await self._call(self.store.versions, owner, design_id)
-        base, _, whole = hand_edits(versions, design["head_version_id"])
-        head = next((version for version in versions if version["id"] == design["head_version_id"]), None)
-        if head is not None and head["source"] not in MODEL_SOURCES:
-            if base is None:
-                # The user wrote this file without a model version to diff against:
-                # the note can only name it, so the message carries it.
-                text += WRITTEN_SUFFIX.format(scad=head["scad"])
-            elif not whole:
-                # The note's diff is cut; the model still needs the file it builds on.
-                text += EDITED_SUFFIX.format(scad=head["scad"])
-        run = await self._start(context, owner, design, text, "draft", design["head_version_id"], payload)
-        return {"run_id": run.run_id, "thread_id": design["thread_id"]}
-
-    async def repair(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        owner = self._owner(context)
-        design_id = _id(payload, "design_id")
-        version = await self._call(self.store.get_version, owner, design_id, _id(payload, "version_id"))
-        render = version.get("render") or {}
-        if version["source"] != "model" or version["repair_requested"] or render.get("ok") is not False:
-            raise AgentRunError(409, "Only a failed model draft gets one automatic repair")
-        design = await self._call(self.store.get_design, owner, design_id)
-        if design["head_version_id"] != version["id"]:
-            await self._call(self.store.set_head, owner, design_id, version["id"])
-        run = await self._start(context, owner, design, REPAIR_MESSAGE.format(seq=version["seq"]), "repair", version["id"], payload)
-        await self._call(self.store.mark_repair, owner, design_id, version["id"])
-        return {"run_id": run.run_id, "thread_id": design["thread_id"]}
-
-    async def finalize(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
-        owner = self._owner(context)
-        design_id = _id(payload, "design_id")
-        version = await self._call(self.store.get_version, owner, design_id, _id(payload, "version_id"))
-        render = version.get("render") or {}
-        if render.get("ok") is not True or not isinstance(render.get("bbox_mm"), list):
-            raise AgentRunError(409, "Finalize a draft that rendered without errors")
-        design = await self._call(self.store.get_design, owner, design_id)
-        await self._call(self.store.set_head, owner, design_id, version["id"])
-        previous = version.get("final")
-        await self._call(self.store.set_final, owner, design_id, version["id"], {"status": "running", "files": [], "draft_bbox_mm": render["bbox_mm"]})
-        try:
-            run = await self._start(context, owner, design, FINALIZE_MESSAGE.format(seq=version["seq"], scad=version["scad"]), "finalize", version["id"], payload)
-        except BaseException:
-            if previous is not None:
-                await self._call(self.store.set_final, owner, design_id, version["id"], previous)
-            else:
-                await self._call(self.store.set_final, owner, design_id, version["id"], {"status": "failed", "files": [], "message": "The finalize run did not start."})
-            raise
-        current = await self._call(self.store.get_version, owner, design_id, version["id"])
-        final = current.get("final") or {}
-        if final.get("status") == "running" and not final.get("run_id"):
-            await self._call(self.store.set_final, owner, design_id, version["id"], {**final, "run_id": run.run_id})
+        run = await self._runs(context).start(
+            thread_id=design["thread_id"],
+            input={"messages": [{"role": "user", "content": text}]},
+            context=run_context,
+            stream_mode=list(STREAM_MODE),
+        )
+        await self._call(self.store.set_run, owner, design_id, run.run_id)
         return {"run_id": run.run_id, "thread_id": design["thread_id"]}
 
     async def messages(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
@@ -384,14 +398,8 @@ class Designs:
         run_id = _run_id(payload)
         design = await self._call(self.store.get_design, owner, design_id)
         run = await self._runs(context).get(thread_id=design["thread_id"], run_id=run_id)
-        if run.status not in ACTIVE:
-            # A finalize run that ended without a build would otherwise read "running" forever.
-            for version in await self._call(self.store.versions, owner, design_id):
-                final = version.get("final") or {}
-                if final.get("status") == "running" and final.get("run_id") == run_id:
-                    await self._call(self.store.set_final, owner, design_id, version["id"], {**final, "status": "failed", "message": "The run ended without building the part."})
-            if design.get("run_id") == run_id:
-                await self._call(self.store.set_run, owner, design_id, None)
+        if run.status not in ACTIVE and design.get("run_id") == run_id:
+            await self._call(self.store.set_run, owner, design_id, None)
         return {"status": run.status}
 
     async def cancel(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
@@ -404,17 +412,11 @@ ACTIONS = (
     "list_designs",
     "create_design",
     "get_design",
-    "get_version",
     "rename_design",
     "delete_design",
     "restore_design",
     "purge_design",
-    "save_version",
-    "report_render",
-    "set_head",
     "prompt",
-    "repair",
-    "finalize",
     "messages",
     "run_status",
     "cancel",

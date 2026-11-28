@@ -20,6 +20,88 @@ export type SurfaceModels = {
   list: Array<{ name: string; display_name?: string }>;
   defaultName?: string;
 };
+/** One entry of a listed thread outputs folder; links are reported, never followed. */
+export type SurfaceThreadFileEntry = {
+  name: string;
+  /** Virtual path: the listed folder, `/`, then `name`. */
+  path: string;
+  kind: "directory" | "file" | "symlink" | "other";
+  /** Bytes for regular files, otherwise null. */
+  size: number | null;
+  modified_at: string | null;
+};
+/**
+ * Read-only access to a thread's `/mnt/user-data/outputs/` tree through the
+ * host's authenticated, owner-checked file routes; usable while a run is active.
+ */
+export type SurfaceThreadFiles = {
+  /** One folder, directories first. Rejects with `status` 404 when it does not exist. */
+  list: (
+    threadId: string,
+    virtualPath: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<SurfaceThreadFileEntry[]>;
+  /** The file's bytes, at most `maxBytes` (default and ceiling 25 MiB). */
+  read: (
+    threadId: string,
+    virtualPath: string,
+    options?: { signal?: AbortSignal; maxBytes?: number },
+  ) => Promise<ArrayBuffer>;
+  /** The authenticated artifact URL, for a link or an `<img>`. */
+  url: (
+    threadId: string,
+    virtualPath: string,
+    options?: { download?: boolean },
+  ) => string;
+};
+/** The modes the composer's dropdown offers; Democracy is launched from its own dialog. */
+export type SurfaceComposerMode =
+  | "flash"
+  | "thinking"
+  | "pro"
+  | "ultra"
+  | "ultracode"
+  | "double_ultracode";
+/**
+ * What the main chat sends with a run for the controls' selection: pass it
+ * as the run's context. The Gateway still enforces model access and clamps
+ * the limits; `plugin_options` carries only other plugins' entries.
+ */
+export type SurfaceRunContext = {
+  model_name?: string;
+  mode: SurfaceComposerMode;
+  thinking_enabled: boolean;
+  is_plan_mode: boolean;
+  subagent_enabled: boolean;
+  reasoning_effort?: string;
+  subagent_model_name?: string;
+  max_total_subagents?: number;
+  max_concurrent_subagents?: number;
+  plugin_options?: Record<string, Record<string, unknown>>;
+};
+export type SurfaceComposerControlsOptions = {
+  /** Keeps a separate selection per control set on one page; 1-64 of `A-Za-z0-9._-`. */
+  storageKey?: string;
+  /** Called with the new run context each time the selection changes. */
+  onChange?: (context: SurfaceRunContext) => void;
+};
+export type SurfaceComposerControlsHandle = {
+  /** A fresh copy of the run context for the current selection. */
+  runContext: () => SurfaceRunContext;
+  /** Unmounts the controls; the page's own cleanup also disposes them. */
+  dispose: () => void;
+};
+/**
+ * The main chat's model picker, mode menu and reasoning-effort menu, rendered
+ * by the host inside a plugin element (in a shadow root of their own). The
+ * selection persists per page in this browser.
+ */
+export type SurfaceComposerControls = {
+  mount: (
+    element: HTMLElement,
+    options?: SurfaceComposerControlsOptions,
+  ) => SurfaceComposerControlsHandle;
+};
 export type SurfaceContext = {
   namespace: string;
   locale: string;
@@ -43,8 +125,12 @@ export type SurfaceContext = {
     runId: string,
     options?: { signal?: AbortSignal },
   ) => AsyncIterable<RunStreamEvent>;
+  /** A thread's output files; only paths under /mnt/user-data/outputs/. Older hosts omit it. */
+  threadFiles?: SurfaceThreadFiles;
   /** The host's current model list, read live; empty while it is still loading. */
   models?: SurfaceModels;
+  /** The chat composer's run controls for a plugin element. Older hosts omit it. */
+  composerControls?: SurfaceComposerControls;
 };
 export type PluginSurface = {
   id: string;

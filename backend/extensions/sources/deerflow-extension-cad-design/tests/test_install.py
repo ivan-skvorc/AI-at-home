@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from deerflow_extension_cad_design import install, resolve_config
-from deerflow_extension_cad_design.actions import ACTIONS
+from deerflow_extension_cad_design.actions import ACTIONS, HostSandbox
 
 PACKAGE = Path(__file__).resolve().parents[1] / "deerflow_extension_cad_design"
 
@@ -16,6 +16,7 @@ class Registry:
         self.accept = accept
         self.plugins = []
         self.contributors = []
+        self.services = []
         self.router_sets = []
 
     def plugin(self, contribution):
@@ -24,6 +25,9 @@ class Registry:
 
     def middlewares(self, contributor):
         self.contributors.append(contributor)
+
+    def service(self, service):
+        self.services.append(service)
 
     def routers(self, routers):
         self.router_sets.append(tuple(routers))
@@ -35,21 +39,22 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_install_registers_tool_actions_page_middleware_and_route(home):
+def test_install_registers_actions_page_middleware_and_the_sandbox_service(home):
     registry = Registry()
     install(registry, {})
     (plugin,) = registry.plugins
     assert plugin.namespace == "cad-design" and plugin.enabled is True
-    assert [tool.name for tool in plugin.tools] == ["scad_draft"] and plugin.tools[0].group == "local_extensions"
+    # No model tool and no route: the model works with the container's bash, the page reads through the host.
+    assert plugin.tools == () and registry.router_sets == []
     assert [action.name for action in plugin.backend] == list(ACTIONS)
     assert plugin.frontend.module == "cad-design" and Path(plugin.frontend.root) == PACKAGE
-    assert len(registry.contributors) == 1 and len(registry.router_sets) == 1
-    paths = [route.path for route in registry.router_sets[0][0].routes]
-    assert paths == ["/api/extensions/cad-design/designs/{design_id}/files/{name}"]
+    assert len(registry.contributors) == 1
+    (service,) = registry.services
+    assert isinstance(service, HostSandbox) and service.container is False
     assert not (home / "cad-design").exists(), "the store is created on first use"
 
 
-def test_a_disabled_record_still_filters_the_tool():
+def test_a_disabled_record_still_scopes_the_brief():
     registry = Registry()
     install(registry, {"enabled": False})
     assert registry.plugins[0].enabled is False
@@ -59,12 +64,21 @@ def test_a_disabled_record_still_filters_the_tool():
 def test_configuration_is_checked(home, monkeypatch):
     assert resolve_config({})["storage_path"] == str(home / "cad-design/designs.sqlite")
     assert resolve_config({"storage_path": "/srv/d.sqlite"})["storage_path"] == "/srv/d.sqlite"
-    for bad in ({"enabled": "yes"}, {"max_source_bytes": 10}, {"max_source_bytes": True}, {"storage_path": ""}, {"surprise": 1}):
+    for bad in ({"enabled": "yes"}, {"storage_path": ""}, {"storage_path": 3}, {"surprise": 1}):
         with pytest.raises(ValueError):
             resolve_config(bad)
     monkeypatch.setenv("DEER_FLOW_HOME", "relative")
     with pytest.raises(ValueError):
         resolve_config({})
+
+
+def test_a_config_from_the_first_release_still_loads(home):
+    """max_source_bytes sized the retired scad_draft tool; migration 79 removes it, and until then it is ignored."""
+    resolved = resolve_config({"enabled": True, "storage_path": "cad-design/designs.sqlite", "max_source_bytes": 65536})
+    assert resolved == {"enabled": True, "storage_path": str(home / "cad-design/designs.sqlite")}
+    registry = Registry()
+    install(registry, {"max_source_bytes": "anything"})
+    assert registry.plugins[0].enabled is True
 
 
 def test_an_unsupported_host_fails_clearly():
@@ -73,7 +87,7 @@ def test_an_unsupported_host_fails_clearly():
 
 
 def test_the_api_version_is_stamped():
-    assert install.__deerflow_api__ == "0.2.14" and install.__deerflow_name__ == "cad-design"
+    assert install.__deerflow_api__ == "0.2.15" and install.__deerflow_name__ == "cad-design"
 
 
 def test_documentation_has_both_locales():

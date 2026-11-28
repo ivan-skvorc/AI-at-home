@@ -1,35 +1,43 @@
-"""The cad-modeling skill says what the CAD module does, no more and no less.
+"""The cad-modeling skill says what cadkit.py does, no more and no less.
 
-The skill is prose a model follows; the module is code. Each can change without
-the other, and a skill that teaches a construct the reader refuses costs every
-conversation a wasted build. These tests read both and fail when they part.
+The skill is prose a model follows; scripts/cadkit.py is the code it runs in the
+CAD sandbox image (docker/sandbox-cad). Each can change without the other, and a
+page that quotes a flag cadkit dropped costs every CAD conversation a failed
+command. These tests read both and fail when they part. They run offline in the
+backend environment: cadkit's heavy imports are lazy, so loading it needs neither
+trimesh nor openscad. That the image holds every program and library cadkit uses
+is backend/tests/test_sandbox_cad_image.py's to check.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
 import re
+import shlex
 import sys
+import types
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL = REPO_ROOT / "skills" / "public" / "cad-modeling"
-PACKAGE = REPO_ROOT / "examples" / "deerflow-extension-cad"
-SOURCE = PACKAGE / "deerflow_extension_cad"
+CADKIT = SKILL / "scripts" / "cadkit.py"
+PAGES = ["SKILL.md", "references/checks.md", "references/fdm.md", "references/openscad.md", "references/strength.md"]
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig")
 
 
-def _allowlist():
-    """The table, loaded by path: it imports nothing, so no kernel and no package are needed."""
-    spec = importlib.util.spec_from_file_location("cad_allowlist_for_skill_test", SOURCE / "allowlist.py")
+def _load():
+    spec = importlib.util.spec_from_file_location("cadkit_for_skill_test", CADKIT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclasses look their module up by name
+    # A scripts/__pycache__ would land in the committed skill tree, which the skill review scans.
     previous = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
@@ -39,143 +47,274 @@ def _allowlist():
     return module
 
 
-def _module_text() -> str:
-    return "\n".join(_read(path) for path in sorted(SOURCE.glob("*.py")))
+cadkit = _load()
 
 
-def test_the_operations_page_is_the_allow_list():
-    hint = "regenerate it: python examples/deerflow-extension-cad/deerflow_extension_cad/allowlist.py > skills/public/cad-modeling/references/operations.md"
-    assert _read(SKILL / "references" / "operations.md") == _allowlist().reference(), hint
+class _Captured(Exception):
+    """Carries cadkit's parser out of main() before it parses anything."""
 
 
-def test_the_operations_page_names_every_method_once_with_an_example():
-    table = _allowlist()
-    page = _read(SKILL / "references" / "operations.md")
-    headings = re.findall(r"^## ([A-Za-z0-9.]+)\(", page, flags=re.MULTILINE)
-    # The two calls on cq, then every method: cq.Wire.makeHelix is the path of a thread (item 59).
-    assert headings == ["cq.Workplane", "cq.Wire.makeHelix", *table.METHODS]
-    assert page.count("```python") == len(table.METHODS) + 2
+def _cli() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """cadkit's own argparse tree: main() builds it inline, so it is caught at parse_args."""
+
+    def capture(self, *args, **kwargs):
+        raise _Captured(self)
+
+    with mock.patch.object(argparse.ArgumentParser, "parse_args", capture):
+        try:
+            cadkit.main([])
+        except _Captured as caught:
+            parser = caught.args[0]
+    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    return parser, dict(commands.choices)
 
 
-def test_the_skill_is_named_after_its_directory_and_says_when_to_use_it():
+PARSER, COMMANDS = _cli()
+FLAGS = {name: {flag for action in command._actions for flag in action.option_strings} for name, command in COMMANDS.items()}
+
+
+@pytest.fixture
+def numpy_only(monkeypatch):
+    """cadkit's lazy import asks for numpy and trimesh; the helpers used here need numpy alone."""
+    pytest.importorskip("numpy")
+    monkeypatch.setitem(sys.modules, "trimesh", types.ModuleType("trimesh"))
+
+
+# ---------------------------------------------------------------- the skill's shape
+
+
+def test_the_skill_is_named_after_its_directory_and_says_it_needs_the_container():
     text = _read(SKILL / "SKILL.md")
     assert text.startswith("---\n")
     front = yaml.safe_load(text.split("---\n", 2)[1])
     assert front["name"] == SKILL.name == "cad-modeling"
-    assert "cad_build" in front["description"] and len(front["description"]) <= 1024
-    # No scripts: the procedure needs the tool and the file reader, and nothing a shell would run.
+    description = front["description"]
+    assert len(description) <= 1024 and "container" in description and "openscad" in description
+
+
+def test_the_skill_holds_its_pages_and_one_script():
     assert sorted(path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()) == [
         "SKILL.md",
-        "references/delegation.md",
-        "references/failures.md",
+        "references/checks.md",
         "references/fdm.md",
-        "references/operations.md",
+        "references/openscad.md",
+        "references/strength.md",
+        "scripts/cadkit.py",
     ]
 
 
+def test_nothing_in_the_skill_names_the_retired_cad_module():
+    # cad_build and its allow-list were removed with the module (FORK.md §51); scad_draft with the old design page.
+    for path in sorted(p for p in SKILL.rglob("*") if p.is_file()):
+        text = _read(path).lower()
+        for retired in ("cad_build", "allow-list", "allowlist", "operations.md", "scad_draft"):
+            assert retired not in text, f"{path.relative_to(SKILL)} names {retired}"
+
+
 def test_the_skill_links_every_reference_and_stays_small():
-    # The skill's body is read whole on every CAD conversation; the references load on demand (item 58).
-    skill = SKILL / "SKILL.md"
-    for reference in sorted((SKILL / "references").iterdir()):
-        assert f"references/{reference.name}" in _read(skill), reference.name
-    assert skill.stat().st_size <= 10 * 1024
-    assert (SKILL / "references" / "fdm.md").stat().st_size <= 6 * 1024
-
-
-def test_the_skill_names_the_tools_arguments_and_its_attempt_limit():
-    tool = _read(SOURCE / "tool.py")
+    # The body is read whole on every CAD conversation; the references load on demand.
     skill = _read(SKILL / "SKILL.md")
-    properties = re.search(r'"properties": \{(.*?)\n    \},', tool, flags=re.DOTALL).group(1)
-    arguments = re.findall(r'^\s+"([a-z0-9_]+)": \{', properties, flags=re.MULTILINE)
-    assert arguments == ["name", "script", "bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm", "bodies"]
-    for argument in arguments:
-        assert f"{argument}=" in skill, argument
-    limit = int(re.search(r"^MAX_ATTEMPTS = (\d+)$", tool, flags=re.MULTILINE).group(1))
-    assert f"({limit} builds in one run)" in skill
-    # What the skill tells the model to read in an answer is what an answer holds.
-    for field in ("error", "checks", "holes", "notes", "print", "unchecked", "expected_changed", "attempt", "next"):
-        assert f"`{field}`" in skill, field
-        assert re.search(rf'answer(\["{field}"\]|\.update\([^)]*\b{field}=)', tool), field
+    for reference in sorted((SKILL / "references").iterdir()):
+        assert f"references/{reference.name}" in skill, reference.name
+    assert "scripts/cadkit.py" in skill
+    assert (SKILL / "SKILL.md").stat().st_size <= 10 * 1024
+    assert (SKILL / "references" / "fdm.md").stat().st_size <= 7 * 1024
 
 
-#: Words the pages quote from the module's own answers. A message reworded there is reworded here.
+def test_without_the_cad_container_the_skill_says_how_to_get_one_and_stops():
+    skill = _read(SKILL / "SKILL.md")
+    section = re.search(r"^## Prerequisites\n(.*?)^## ", skill, flags=re.MULTILINE | re.DOTALL).group(1)
+    assert "openscad --version" in section and "cadkit.py --help" in section
+    assert "`make sandbox-cad-image`" in section and "`make sandbox-enable MODE=container IMAGE=cad`" in section
+    assert ", and stop." in section
+    # Host bash runs the model's code on the Gateway's machine; the skill may only rule it out, in the same clause.
+    flat = " ".join(section.split())
+    for match in re.finditer("host bash", flat):
+        clause = re.split(r"[,.;:]", flat[: match.start()])[-1]
+        assert "never" in clause.lower(), clause
+    assert all("allow_host_bash" not in _read(SKILL / page) for page in PAGES)
+    makefile = _read(REPO_ROOT / "Makefile")
+    assert re.search(r"^sandbox-cad-image:", makefile, flags=re.MULTILINE) and re.search(r"^sandbox-enable:", makefile, flags=re.MULTILINE)
+
+
+# ---------------------------------------------------------------- the skill and cadkit
+
+
+def _quoted_commands() -> list[tuple[str, str, str]]:
+    """(where, command, rest of the line) for every `cadkit.py <command> ...` in the pages and cadkit itself."""
+    found = []
+    for where, text in [*((page, _read(SKILL / page)) for page in PAGES), ("cadkit.py", _read(CADKIT))]:
+        found += [(where, command, rest) for command, rest in re.findall(r"cadkit\.py[ \t]+([a-z]+)([^\n`\"]*)", text)]
+    return found
+
+
+def _flags(text: str) -> list[str]:
+    """Options as a command line writes them: after a space or "[", so translate(-p) is not one."""
+    return re.findall(r"(?:^|(?<=[\s\[]))(--[A-Za-z0-9][\w-]*|-[A-Za-z][\w-]*)", text)
+
+
+def test_every_quoted_command_and_flag_is_one_cadkit_takes():
+    quoted = _quoted_commands()
+    assert {command for _, command, _ in quoted} == set(COMMANDS) == {"render", "check", "views", "print", "export", "guide", "study", "testpiece", "compare"}
+    for where, command, rest in quoted:
+        assert command in COMMANDS, f"{where}: cadkit.py {command}"
+        for flag in _flags(rest):
+            assert flag in FLAGS[command], f"{where}: cadkit.py {command} has no {flag}"
+
+
+#: Flags the pages name in backticks that belong to another program.
+NOT_CADKIT = {"--system-site-packages": "python3 -m venv's, named to say what a virtual environment hides"}
+
+
+def test_every_flag_in_inline_code_belongs_to_one_cadkit_command():
+    for page in PAGES:
+        text = re.sub(r"```.*?```", "", _read(SKILL / page), flags=re.DOTALL)
+        for span in re.findall(r"`([^`]+)`", text):
+            flags = [flag for flag in _flags(span) if flag not in NOT_CADKIT]
+            named = re.match(r"(?:cadkit\.py\s+)?([a-z]+)\s", span)
+            owners = [named.group(1)] if named and named.group(1) in COMMANDS else list(COMMANDS)
+            if flags:
+                assert any(set(flags) <= FLAGS[owner] for owner in owners), f"{page}: `{span}`"
+
+
+def _skill_command_lines() -> list[list[str]]:
+    """The arguments of each cadkit command in SKILL.md's code blocks, as written; `<design>` stays a path."""
+    blocks = re.findall(r"```bash\n(.*?)```", _read(SKILL / "SKILL.md"), flags=re.DOTALL)
+    lines = [line for block in blocks for line in block.splitlines() if re.search(r"cadkit\.py [a-z]", line)]
+    return [shlex.split(line.split("cadkit.py", 1)[1]) for line in lines]
+
+
+def test_the_skill_runs_each_command_on_the_design_folder_and_cadkit_parses_it(numpy_only):
+    skill = _read(SKILL / "SKILL.md")
+    # The design page lists these folders; a render anywhere else is invisible to it.
+    assert "/mnt/user-data/outputs/<design>/v<N>/" in skill and "/mnt/user-data/workspace/<design>/model.scad" in skill
+    lines = _skill_command_lines()
+    # The guide goes first so the zip that export packs holds it.
+    assert [argv[0] for argv in lines] == ["render", "check", "views", "print", "guide", "export"]
+    for argv in lines:
+        try:
+            args = PARSER.parse_args(argv)
+        except SystemExit:
+            pytest.fail(f"cadkit.py does not parse: {' '.join(argv)}")
+        assert (args.design if args.command == "render" else args.path) == "/mnt/user-data/outputs/<design>"
+        if getattr(args, "sections", None):
+            assert cadkit._parse_sections(args.sections, {})
+    export = PARSER.parse_args(lines[-1])
+    assert export.step and export.threemf and export.zip
+
+
+def test_the_commands_the_skill_names_in_its_prose_parse_on_the_design_folder(numpy_only):
+    """study, testpiece and compare appear in sentences, not code blocks; each still parses as written."""
+    flat = " ".join(_read(SKILL / "SKILL.md").split())
+    quoted = {match.group(1): match.group(0) for match in re.finditer(r"`cadkit\.py (study|testpiece|compare) ([^`]+)`", flat)}
+    assert set(quoted) == {"study", "testpiece", "compare"}
+    study = PARSER.parse_args(shlex.split(quoted["study"].strip("`").split("cadkit.py", 1)[1]))
+    assert study.design == "/mnt/user-data/outputs/<design>" and cadkit._parse_param(study.param, study.define)[0] == "r"
+    testpiece = PARSER.parse_args(shlex.split(quoted["testpiece"].strip("`").split("cadkit.py", 1)[1]))
+    assert testpiece.path == "/mnt/user-data/outputs/<design>" and testpiece.box == "x0,y0,z0,x1,y1,z1"
+    compare = PARSER.parse_args(shlex.split(quoted["compare"].strip("`").split("cadkit.py", 1)[1]))
+    # The editable STEP is named so that export finds its compare result and zips it.
+    assert (compare.a, compare.b) == ("<body>.stl", "<body>-cq.step")
+    assert "v<N>/<body>-cq.step" in flat and '"<body>-cq.compare.json"' not in flat
+    assert 'f"{body}-cq.compare.json"' in _read(CADKIT) and 'f"{b_path.stem}.compare.json"' in _read(CADKIT)
+
+
+def test_the_skill_states_the_exit_codes_cadkit_returns():
+    skill = " ".join(_read(SKILL / "SKILL.md").split())
+    assert "Exit 0 is clean, 1 means a check failed, 2 means the command could not run." in skill
+    assert "Exit status: 0 pass, 1 a check failed, 2 the command could not run" in " ".join(cadkit.__doc__.split())
+
+
+def _scad_blocks(page: str) -> list[str]:
+    return re.findall(r"```openscad\n(.*?)```", _read(SKILL / page), flags=re.DOTALL)
+
+
+def test_the_bodies_convention_the_pages_teach_is_the_one_cadkit_reads():
+    blocks = _scad_blocks("SKILL.md") + _scad_blocks("references/openscad.md")
+    assert len(blocks) == 2
+    for block in blocks:
+        bodies = cadkit._bodies_of(block, None)
+        drawn = set(re.findall(r'part == "([^"]+)"', block)) - {"all"}
+        assert bodies and drawn and drawn <= set(bodies), block
+        assert re.search(r'^\s*part = "all";', block, flags=re.MULTILINE) and re.search(r'^\s*layout = "assembled";', block, flags=re.MULTILINE)
+    template = _scad_blocks("references/openscad.md")[0]
+    assert set(re.findall(r'part == "([^"]+)"', template)) - {"all"} == set(cadkit._bodies_of(template, None))
+    assert set(re.findall(r'name == "([^"]+)"', template)) <= set(cadkit._bodies_of(template, None))
+    # The two variables the pages say cadkit sets are the ones it passes to openscad.
+    source = _read(CADKIT)
+    assert "f'part=\"{name}\"'" in source and "'layout=\"print\"'" in source
+
+
+def test_the_poses_example_is_one_cadkit_accepts(tmp_path, numpy_only):
+    page = _read(SKILL / "references" / "checks.md")
+    example = re.search(r"```json\n(.*?)```", page, flags=re.DOTALL).group(1)
+    data = json.loads(example)
+    named = {body for pose in data["poses"] for body in pose.get("place", {})}
+    named |= {body for pose in data["poses"] if "sweep" in pose for body in pose["sweep"].get("bodies", [pose["sweep"].get("body")])}
+    named |= {body for pair in data["ignore"] for body in pair}
+    path = tmp_path / "poses.json"
+    path.write_text(example)
+    bodies = sorted(named)
+    for pose in cadkit._read_poses(path, bodies)["poses"]:
+        assert len(cadkit._pose_states(pose, bodies)) == pose.get("sweep", {}).get("steps", 1), pose["name"]
+    assert f"Up to {cadkit.MAX_SWEEP_STEPS} steps" in page
+
+
+#: Words the pages quote from cadkit's answers. A message reworded there is reworded on the page.
 QUOTED = [
-    "a script may contain two imports",
-    "is not available: write import math",
-    "a comprehension has one for and no if",
-    "is outside this list",
-    "has no answer: the number is outside what",
-    "is a name the script is given and cannot be assigned",
-    "an outline drawn earlier in the script that ends with lines, arcs",
-    "loft needs two or more closed outlines",
-    "sweep needs a closed outline drawn before it",
-    "the axis must not cross the outline",
-    "on cq a script may use cq.Workplane(...) and cq.Wire.makeHelix(...)",
-    "lettering is cut into the part unless combine=True",
-    "turns (height / pitch)",
-    "range() takes whole numbers",
-    "this loop would not run once",
-    "a loop runs over range(...) or over a list",
-    "is not on the allow-list",
-    "a script does not export",
-    "removed no material",
-    "added no material",
-    "left no solid",
-    "there is no closed outline",
-    "Call cad_build again with the same arguments",
-    "Do not call cad_build again",
-    "builds of this part in this run and the last one did not pass",
-    "the cut ran away from the material",
-    "not measured",
-    "Leave this pass out",
-    # A part of several bodies (item 51): the check, the way out NEXT_LOOSE gives, the notes and the fallback.
-    "closed solids",
-    "call cad_build again with the same name and bodies=",
-    "Bodies become one part only where they overlap or share a face",
-    "The smallest gap between bodies is",
-    "under the printer's minimum clearance",
-    "is thinner than one layer",
-    "no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled",
-    # Holes where they are, and how many edges a fillet or chamfer took (item 57).
-    "nearest_at",
-    "off_axis_mm",
-    "past_floor_mm",
-    "nearest_matches",
-    "lists every hole with where it is",
-    "check that the selection took only the edges meant",
-    # The steps after the checks (items 53 and 54), and printability's notes.
-    "no picture: the build used most of its time",
-    "no print check: the build used most of its time",
-    "under two nozzle widths",
-    "and needs support",
-    "side on the bed it would be",
-    "nothing flat rests on the bed: give it a flat face at the lowest z, or it needs a brim or support",
-    "larger than the build volume",
-    "it fits turned 90° on the bed",
-    "the mesh is not watertight",
-    # Several bodies are judged as .parts.3mf lays them out, each named by its number.
-    "do not fit the build volume together",
-    "printed apart, as the .parts.3mf lays them out, each one does",
+    "CLASH as modelled: ",
+    "NOT A CLOSED SOLID",
+    "separate shells",
+    "top level object is empty",
+    "render took longer than",
+    "states, worst at [",
+    "smallest gap",
+    "PROBLEM",
+    "held on one side only",
+    "thinnest wall",
+    "samples thinner than",
+    "above the bed",
+    "no flat face on the bed",
+    "may fuse",
+    "slicer:",
+    "slicer says:",
+    "read back as written",
+    "zip not written",
+    "left out of the zip",
+    "passes:",
+    "no value passes",
+    "assigns no",
+    "left out, the box misses them",
+    "holds nothing of",
+    "volume differs by",
+    "bounding boxes by at most",
+    "symmetric difference",
+    "largest surface deviation",
 ]
 
 
 @pytest.mark.parametrize("phrase", QUOTED)
-def test_a_message_the_failures_page_quotes_is_one_the_module_gives(phrase):
-    assert phrase in _read(SKILL / "references" / "failures.md"), "the page no longer quotes it: drop it from QUOTED"
-    assert phrase in _module_text(), "the module no longer says this: reword the page"
+def test_a_message_the_pages_quote_is_one_cadkit_gives(phrase):
+    assert any(phrase in _read(SKILL / page) for page in PAGES), "no page quotes it any more: drop it from QUOTED"
+    assert phrase in _read(CADKIT), "cadkit no longer says this: reword the page"
 
 
-def test_the_skill_says_what_next_says_about_the_picture_and_loose_bodies():
-    tool = _read(SOURCE / "tool.py")
-    skill = _read(SKILL / "SKILL.md")
-    # NEXT_PICTURE asks for one look, after a pass; the skill says when (step 5) and how to show it (step 7).
-    assert "look at it once" in re.search(r"^NEXT_PICTURE = (.*)$", tool, flags=re.MULTILINE).group(1)
-    assert "Look at it once, at review" in skill and "`![name](its path in files)`" in skill
-    # NEXT_LOOSE gives bodies=N as the way out for loose bodies; the skill teaches the same argument.
-    assert "bodies={solids}" in tool and "bodies=N" in skill
+def test_the_print_defaults_fdm_md_states_are_cadkits():
+    page = " ".join(_read(SKILL / "references" / "fdm.md").split())
+    nozzle, layer, overhang, wall, *bed = re.search(
+        r"The defaults of `cadkit.py print` match this page: a ([\d.]+) mm nozzle, ([\d.]+) mm layers, ([\d.]+) degree overhangs, ([\d.]+) mm walls, a (\d+) x (\d+) x (\d+) mm bed\.", page
+    ).groups()
+    assert COMMANDS["print"].get_default("overhang") == float(overhang)
+    assert COMMANDS["print"].get_default("min_wall") == float(wall)
+    assert cadkit._parse_bed(COMMANDS["print"].get_default("bed")) == [float(v) for v in bed]
+    source = _read(CADKIT)
+    assert f'"--nozzle-diameter", "{nozzle}"' in source and f'"--layer-height", "{layer}"' in source
 
 
-def _fdm_table():
+# ---------------------------------------------------------------- fdm.md
+
+
+def _fdm_table() -> dict[float, dict[str, float]]:
     """The hardware table of fdm.md as {thread size: {column: number}}."""
     page = _read(SKILL / "references" / "fdm.md")
     header = next(line for line in page.splitlines() if line.startswith("| Size |"))
@@ -196,86 +335,9 @@ def test_every_hole_in_the_fdm_table_clears_its_metal_part():
         assert size < row["Clearance, ISO 273 medium"] < row["Model at"], size
         assert row["Nut across flats, ISO 4032"] < row["Nut trap across flats"], size
         assert size < row["Insert hole"], size
+        # The page's own rules: model a hole 0.2 mm over its size, a nut trap 0.3 mm over across flats.
+        assert row["Model at"] == pytest.approx(row["Clearance, ISO 273 medium"] + 0.2), size
+        assert row["Nut trap across flats"] == pytest.approx(row["Nut across flats, ISO 4032"] + 0.3), size
     for column in next(iter(rows.values())):
         values = [row[column] for row in rows.values()]
         assert values == sorted(values) and len(set(values)) == len(values), column
-
-
-@pytest.mark.parametrize("page", ["SKILL.md", "references/failures.md", "references/fdm.md"])
-def test_a_page_names_only_methods_on_the_allow_list(page):
-    """Every call in inline code, and every camelCase name in backticks, is a method the reader takes."""
-    table = _allowlist()
-    text = re.sub(r"```.*?```", "", _read(SKILL / page), flags=re.DOTALL)
-    spans = re.findall(r"`([^`\n]+)`", text)
-    calls = {name for span in spans for name in re.findall(r"(?<![\w.])([a-z]\w*)\(|(?<!math)\.([a-z]\w*)\(", span) for name in name if name}
-    named = calls | {span for span in spans if re.fullmatch(r"[a-z]+[A-Z][A-Za-z]*", span)}
-    functions = {name for span in spans for name in re.findall(r"\bmath\.([a-z]\w*)\(", span)}
-    known = set(table.METHODS) | set(table.BUILTINS) | {"range", "makeHelix"}
-    assert named and named <= known, named - known
-    assert functions <= set(table.MATH_FUNCTIONS), functions - set(table.MATH_FUNCTIONS)
-
-
-ALLOWED = {
-    "a loop with arithmetic for the choice": "result = cq.Workplane('XY').box(80, 30, 5)\nfor i in range(6):\n    side = (-1) ** i\n    result = result.faces('>Z').workplane().pushPoints([(-30 + i * 12, side * 5)]).hole(3)\n",
-    "a sign that alternates over a long loop": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(120):\n    side = (-1) ** i\n",
-    "a feature placed from the part's origin": "result = cq.Workplane('XY').box(80, 60, 30)\nresult = result.faces('>X').workplane(origin=(0, 0, 0)).pushPoints([(0, 5)]).slot2D(12, 6).cutBlind(-2)\n",
-    "a count worked out with a decimal pitch": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(50 // 3.5):\n    total = i\n",
-    "a point taken apart in the loop header": "points = [(-10, 0), (10, 0)]\nresult = cq.Workplane('XY').box(40, 10, 2)\nfor x, y in points:\n    result = result.faces('>Z').workplane().pushPoints([(x, y)]).hole(3)\n",
-    "an augmented assignment and a square root": "side = 2 ** 0.5\nside += 9\nside *= 2\nresult = cq.Workplane('XY').box(side, side, side)\n",
-    # Habits of ordinary Python the reader computes itself (item 55).
-    "a comprehension": "points = [(i * 10, 0) for i in range(3)]\nresult = cq.Workplane('XY').box(40, 10, 2).faces('>Z').workplane().pushPoints(points).hole(3)\n",
-    "import math": "import math\nresult = cq.Workplane('XY').box(math.sqrt(2) * 10, 20 * math.sin(math.radians(30)), 2)\n",
-    "indexing": "p = (12, 8)\nresult = cq.Workplane('XY').box(p[0], p[-1], 2)\n",
-    "a built-in call": "n = int(7 / 2)\nresult = cq.Workplane('XY').box(max(n, 2), min(10, 20), round(2.6))\n",
-    "two names in one assignment": "w, d, t = 60, 40, 6\nresult = cq.Workplane('XY').box(w, d, t)\n",
-    # Operations that need no new trust (item 56): the path is an outline drawn first.
-    "a sweep along a path drawn first": 'path = cq.Workplane("XZ").polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane("XY").rect(4, 4).sweep(path)\n',
-    "a loft between two workplanes": "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n",
-    # Lettering and threads (item 59).
-    "lettering cut into a face": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, -0.6)\n",
-    "a thread swept along a helix": (
-        "helix = cq.Wire.makeHelix(1.25, 10, 3.2)\n"
-        "thread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)\n"
-        "result = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)\n"
-    ),
-    # A part too tall for the bed, cut in two and built as two bodies (items 51 and 54).
-    "a part split in two for the bed": "result = cq.Workplane('XY').box(20, 20, 300).faces('>Z').workplane(-150).split(keepTop=True, keepBottom=True)\n",
-    "an angled hole from a tilted workplane": "result = cq.Workplane('XY').box(40, 40, 10).faces('>Z').workplane(origin=(0, 0, 0)).transformed(rotate=(30, 0, 0)).hole(5)\n",
-}
-REFUSED = {
-    "an if statement": "x = 1\nif x:\n    y = 2\n",
-    "a while loop": "x = 1\nwhile x:\n    x = 0\n",
-    "a function": "def link(i):\n    return i\n",
-    "a comprehension with an if": "points = [(i, 0) for i in range(3) if i]\n",
-    "from math import": "from math import sqrt\n",
-    "another import": "import numpy\n",
-    "a slice": "p = (1, 2, 3)\nx = p[1:]\n",
-    "a conditional expression": "x = 1 if True else 2\n",
-    "an f-string": "x = f'{1}'\n",
-    "a comparison": "big = 3 > 2\n",
-    "a list that grows": "points = [(0, 0)]\npoints += [(1, 1)]\n",
-    "a font named by the script": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HI', 8, -0.6, font='Arial')\n",
-}
-
-
-def _reader():
-    pytest.importorskip("deerflow_extension_api", reason="the reader is part of the extension package, which needs its API")
-    sys.path.insert(0, str(PACKAGE))
-    try:
-        from deerflow_extension_cad.interpreter import ScriptRefused, compile_script
-    finally:
-        sys.path.remove(str(PACKAGE))
-    return compile_script, ScriptRefused
-
-
-@pytest.mark.parametrize("script", ALLOWED.values(), ids=ALLOWED.keys())
-def test_what_the_skill_teaches_is_what_the_reader_accepts(script):
-    compile_script, _ = _reader()
-    assert compile_script(script).operations
-
-
-@pytest.mark.parametrize("script", REFUSED.values(), ids=REFUSED.keys())
-def test_what_the_skill_rules_out_is_what_the_reader_refuses(script):
-    compile_script, refused = _reader()
-    with pytest.raises(refused):
-        compile_script(script)

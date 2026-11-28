@@ -191,3 +191,140 @@ test("a full-layout surface root fills its host and models pass through", () => 
   expect(models).toEqual([{ name: "a", display_name: "A" }]);
   expect(root.style.height).toBe("100%");
 });
+
+test("thread file reads carry the page signal and stop with the page", async () => {
+  const seenSignals: AbortSignal[] = [];
+  const files = {
+    list: rs.fn(async (_t: string, _p: string, signal: AbortSignal) => {
+      seenSignals.push(signal);
+      return [];
+    }),
+    read: rs.fn(
+      async (_t: string, _p: string, signal: AbortSignal, max?: number) => {
+        seenSignals.push(signal);
+        return new ArrayBuffer(max ?? 0);
+      },
+    ),
+    url: rs.fn((t: string, p: string, download?: boolean) =>
+      [t, p, String(download)].join("|"),
+    ),
+  };
+  let later!: NonNullable<
+    Parameters<Parameters<typeof mountSurface>[1]["mount"]>[1]["threadFiles"]
+  >;
+  const own = new AbortController();
+  const cleanup = mountSurface(
+    document.createElement("div"),
+    {
+      id: "designs",
+      slot: "page",
+      title: "Designs",
+      mount(_root, context) {
+        later = context.threadFiles!;
+        return { dispose: rs.fn() };
+      },
+    },
+    {
+      namespace: "cad-design",
+      locale: "en",
+      settings: {},
+      callBackend: rs.fn(),
+      threadFiles: files,
+    },
+    rs.fn(),
+  );
+  const path = "/mnt/user-data/outputs/design";
+  expect(await later.list("t", path, { signal: own.signal })).toEqual([]);
+  expect(
+    (await later.read("t", `${path}/v1/a.stl`, { maxBytes: 8 })).byteLength,
+  ).toBe(8);
+  expect(later.url("t", `${path}/v1/a.stl`, { download: true })).toBe(
+    `t|${path}/v1/a.stl|true`,
+  );
+  own.abort();
+  expect(seenSignals[0]?.aborted).toBe(true);
+  expect(seenSignals[1]?.aborted).toBe(false);
+  cleanup();
+  expect(seenSignals[1]?.aborted).toBe(true);
+  await expect(later.list("t", path)).rejects.toThrow();
+  await expect(later.read("t", `${path}/v1/a.stl`)).rejects.toThrow();
+  expect(files.list).toHaveBeenCalledTimes(1);
+  expect(files.read).toHaveBeenCalledTimes(1);
+});
+
+test("composer controls end with the page and contain the page's callback", () => {
+  const disposed: string[] = [];
+  const forwarded: unknown[] = [];
+  const host = {
+    mount: rs.fn(
+      (
+        _element: HTMLElement,
+        options: { storageKey?: unknown; onChange?: (c: never) => void },
+      ) => {
+        const key = String(options.storageKey);
+        forwarded.push(options.onChange);
+        return {
+          runContext: () => ({
+            mode: "pro" as const,
+            thinking_enabled: true,
+            is_plan_mode: true,
+            subagent_enabled: false,
+          }),
+          dispose: () => disposed.push(key),
+        };
+      },
+    ),
+  };
+  let controls!: NonNullable<
+    Parameters<
+      Parameters<typeof mountSurface>[1]["mount"]
+    >[1]["composerControls"]
+  >;
+  const onChange = rs.fn(() => {
+    throw new Error("page bug");
+  });
+  let kept!: { runContext: () => unknown; dispose: () => void };
+  const cleanup = mountSurface(
+    document.createElement("div"),
+    {
+      id: "designs",
+      slot: "page",
+      title: "Designs",
+      mount(root, context) {
+        controls = context.composerControls!;
+        const slot = document.createElement("div");
+        root.append(slot);
+        kept = controls.mount(slot, { storageKey: "a", onChange });
+        controls.mount(slot, { storageKey: "b" }).dispose();
+        return { dispose: rs.fn() };
+      },
+    },
+    {
+      namespace: "cad-design",
+      locale: "en",
+      settings: {},
+      callBackend: rs.fn(),
+      composerControls: host,
+    },
+    rs.fn(),
+  );
+  expect(kept.runContext()).toMatchObject({ mode: "pro" });
+  expect(disposed).toEqual(["b"]);
+  // The page's callback throwing stays inside the page; none is passed for "b".
+  const wrapped = forwarded[0] as (context: unknown) => void;
+  expect(() => wrapped({ mode: "flash" })).not.toThrow();
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(forwarded[1]).toBeUndefined();
+  expect(() => controls.mount({} as HTMLElement, { storageKey: "c" })).toThrow(
+    TypeError,
+  );
+  cleanup();
+  expect(disposed).toEqual(["b", "a"]);
+  kept.dispose();
+  expect(disposed).toEqual(["b", "a"]);
+  // After the page, no callback reaches it and no control can be mounted.
+  wrapped({ mode: "flash" });
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(() => controls.mount(document.createElement("div"))).toThrow();
+  expect(host.mount).toHaveBeenCalledTimes(2);
+});

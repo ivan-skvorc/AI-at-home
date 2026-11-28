@@ -8,7 +8,7 @@
       "usage": [
         {
           "title": "Open a model",
-          "description": "Open a GLB or STL file, such as a part from the CAD module, in the right-hand panel, the Files view or the standalone reader."
+          "description": "Open a GLB or STL file, such as a body or assembly the cad-modeling skill wrote, in the right-hand panel, the Files view or the standalone reader."
         },
         {
           "title": "Turn and measure",
@@ -21,7 +21,7 @@
       ],
       "requirements": [
         "Ships installed and enabled in this fork. Turn it off with make extension-disable NAME=cad-preview.",
-        "Needs WebGL in the browser. A failed build (.failed.glb) is shown with a note pointing to its report."
+        "Needs WebGL in the browser. A file named *.failed.glb is shown with a note pointing to its report."
       ]
     },
     "zh-CN": {
@@ -30,7 +30,7 @@
       "usage": [
         {
           "title": "打开模型",
-          "description": "在右侧面板、文件视图或独立阅读页中打开 GLB 或 STL 文件，例如 CAD 模块生成的零件。"
+          "description": "在右侧面板、文件视图或独立阅读页中打开 GLB 或 STL 文件，例如 cad-modeling 技能生成的零件或装配体。"
         },
         {
           "title": "旋转与测量",
@@ -43,7 +43,7 @@
       ],
       "requirements": [
         "此分支默认安装并启用。可通过 make extension-disable NAME=cad-preview 关闭。",
-        "需要浏览器支持 WebGL。未通过检查的构建（.failed.glb）会显示提示，并指向其报告。"
+        "需要浏览器支持 WebGL。名为 *.failed.glb 的文件会显示提示，并指向其报告。"
       ]
     }
   },

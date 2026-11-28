@@ -98,7 +98,7 @@ def test_committed_manifest_matches_schema_and_strict_parser() -> None:
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
     parsed = parse_manifest(manifest_path.read_bytes(), source=str(manifest_path))
 
-    assert len(parsed.waivers) == 2
+    assert len(parsed.waivers) == 5
     assert parsed.waivers[0].preapproved_file_sha256s == (
         "sha256:2877bde08bf3f437b9dae3d57585a0840b9b1024736d2e5c6c657b71899269d0",
         "sha256:83e82d6049147a1d8b28a5155b35eed270e9053e9bde8f99893b597a2e7c3974",
@@ -109,16 +109,22 @@ def test_committed_manifest_matches_schema_and_strict_parser() -> None:
         "sha256:bd7bc409540265f91eac3f2c82e104b6db0e0aeb12b3aa7ef4d79116cff8791b",
         "sha256:9de295d782b3d8e88b03c2489ea2bac64c894bab1f88302ce68b8fc61f72c535",
     )
+    # cad-modeling's cadkit.py runs openscad and prusa-slicer; its three waivers pin one reviewed file.
+    cad = [waiver for waiver in parsed.waivers if waiver.package == "skills/public/cad-modeling"]
+    assert [(waiver.path, waiver.line) for waiver in cad] == [("scripts/cadkit.py", 427), ("scripts/cadkit.py", 509), ("scripts/cadkit.py", 977)]
+    assert {waiver.file_sha256 for waiver in cad} == {"sha256:fb5114dc381b7685d6a859fc62a7b83cef6594642ddcb2c21a5635b09f690fc4"}
+    assert all(waiver.preapproved_file_sha256s == () for waiver in cad)
 
 
-def test_skill_creator_waivers_match_current_error_findings() -> None:
-    package = REPO_ROOT / "skills/public/skill-creator"
+def test_committed_waivers_match_current_error_findings() -> None:
     manifest = parse_manifest((REPO_ROOT / ".github/skill-review-waivers.v1.json").read_bytes(), source="committed manifest")
-    facts = analyze_skill_package(LocalDirectoryReader(package).read(), profile="deerflow")
+    packages = sorted({waiver.package for waiver in manifest.waivers})
+    assert packages == ["skills/public/cad-modeling", "skills/public/skill-creator"]
+    facts_by_package = {package: analyze_skill_package(LocalDirectoryReader(REPO_ROOT / package).read(), profile="deerflow") for package in packages}
 
     validation_errors = validate_manifest_against_facts(
         manifest,
-        facts_by_package={"skills/public/skill-creator": facts},
+        facts_by_package=facts_by_package,
         repo_root=REPO_ROOT,
         today=date(2026, 8, 31),
     )

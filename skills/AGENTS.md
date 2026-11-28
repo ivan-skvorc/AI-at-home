@@ -17,11 +17,16 @@ run in Skill Review CI, independent of package review.
   optional import unavailable, and mock the HTTP transport.
 - **A skill CLI exits non-zero on failure**, with diagnostics on stderr and
   result URLs on stdout.
-- **A skill that drives an extension's tool repeats that tool's contract in
-  prose, so a test ties the two.** `cad-modeling` quotes the arguments, limits
-  and messages of `cad_build`, and its operations page is generated from the
-  module's allow-list. `tests/skills/test_cad_modeling.py` reads both sides;
-  reword a quoted message in the module and on the page together.
+- **A skill that drives a script repeats its contract in prose, so a test ties
+  the two.** `cad-modeling` drives `scripts/cadkit.py` in the CAD sandbox image
+  (`docker/sandbox-cad/`), never in the Gateway.
+  `tests/skills/test_cad_modeling.py` ties the commands, flags and messages its
+  pages quote to cadkit's argparse and source, and
+  `backend/tests/test_sandbox_cad_image.py` ties every program and library
+  cadkit uses to the image; change the three together. Skill Review CI skips
+  `tests/skills/test_cadkit.py`'s end-to-end group, which needs openscad,
+  trimesh and manifold3d, so run it where they are installed before changing
+  cadkit; the Sandbox CAD Image workflow runs the loop inside the built image.
 - **Every enabled public skill's name rides each small-window request.** The
   32K context-fit critical check (`backend/tests/test_context_fit_critical.py`)
   has a few dozen tokens of headroom in the heaviest mode; a new public skill

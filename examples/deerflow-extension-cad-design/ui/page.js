@@ -1,45 +1,41 @@
 import { prepareInWorker } from "../../deerflow-extension-cad-preview/ui/worker-client.js";
 
-import { createEditor } from "./editor.js";
 import {
-  appendOnly,
-  endedWithoutDraft,
-  isDraftSource,
-  isEngineFailure,
-  shouldRepair,
-  shouldReport,
-  shouldRetrySave,
-} from "./outcomes.js";
-import { parseParameters, withValues } from "./params.js";
+  MAX_JSON_BYTES,
+  MAX_SOURCE_BYTES,
+  bodiesOf,
+  checkSummary,
+  designFolder,
+  fileKey,
+  filesByName,
+  hasFolder,
+  parseJson,
+  printSummary,
+  renderSummary,
+  versionNumbers,
+  viewImages,
+} from "./files.js";
+import { appendOnly, endedWithoutVersion, pickVersion } from "./outcomes.js";
 import {
   assistantMessages,
   createRunState,
   foldRunEvent,
-  isScadDraft,
-  scadCalls,
+  toolCalls,
 } from "./run-stream.js";
-import { LIMITS_MS, createScadRunner } from "./scad-client.js";
-import { capFn, completePrefix } from "./scad-text.js";
 import { STYLE } from "./style.js";
 import { strings } from "./text.js";
-import { timeline } from "./versions.js";
 import { VIEWS, createViewer } from "./viewer.js";
-import { WASM_INFO } from "./wasm-info.js";
-import { loadWasm } from "./wasm-loader.js";
 
-const LIVE_FN_CAP = 24;
-const LIVE_DEBOUNCE_MS = 300;
-const EDIT_DEBOUNCE_MS = 500;
-const SLIDER_DEBOUNCE_MS = 80;
-// Arrow keys on a slider fire `change` per step: save once the keys rest.
-const SLIDER_COMMIT_MS = 600;
-const MODEL_RETRY_MS = 1000;
-const MODEL_RETRIES = 30;
 const LEFT_DEFAULT = 38;
 const POLL_MS = 2000;
+/** Tool results arrive in bursts; one listing follows the burst. */
+const REFRESH_MS = 400;
 const NARROW_PX = 768;
+/** Parsed bodies and read JSON kept per design view, oldest dropped first. */
+const CACHE_ENTRIES = 48;
 const ACTIVE = new Set(["pending", "running"]);
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
+const TABS = ["preview", "views", "checks", "code", "files"];
 
 const element = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -69,11 +65,18 @@ const storage = {
     }
   },
 };
+/** Keep at most CACHE_ENTRIES values; a Map iterates in insertion order. */
+const remember = (cache, key, value) => {
+  cache.set(key, value);
+  while (cache.size > CACHE_ENTRIES) cache.delete(cache.keys().next().value);
+  return value;
+};
 
 /** Mount the Designs page into `root` (inside the host's shadow root); returns dispose(). */
 export function mountPage(root, context) {
   const text = strings(context.locale);
   const { signal } = context;
+  const files = context.threadFiles ?? null;
   const number = new Intl.NumberFormat(context.locale, {
     maximumFractionDigits: 2,
   });
@@ -85,33 +88,44 @@ export function mountPage(root, context) {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "" : when.format(date);
   };
-  const triple = (values) => values.map((v) => number.format(v)).join(" × ");
+  const fmt = (value) => (value === null ? "?" : number.format(value));
+  const triple = (values) => values.map(fmt).join(" × ");
+  const bytes = (size) =>
+    typeof size !== "number"
+      ? ""
+      : size < 1024
+        ? `${size} B`
+        : size < 1024 * 1024
+          ? `${number.format(size / 1024)} KiB`
+          : `${number.format(size / 1024 / 1024)} MiB`;
 
   const S = {
     trash: false,
+    container: true,
     design: null,
+    folder: designFolder(null),
     versions: [],
-    headId: null,
-    source: "",
-    savedSource: "",
+    selected: null,
+    // Show the newest version as it appears, until the user picks an older one.
+    follow: true,
+    loaded: null,
+    hidden: new Set(),
     messages: [],
     run: null,
-    saving: null,
-    shown: null,
-    lastGood: null,
-    stl: null,
-    finalKey: null,
-    compare: "both",
+    tab: "preview",
     phone: "preview",
     narrow: false,
     note: null,
   };
-  // Created with the first design view; the viewer is released when it closes.
+  // Created with the first design view; released when it closes.
   let viewer = null;
-  // Set when the 3D view could not start (no WebGL); renders still run and report.
+  // Set when the 3D view could not start (no WebGL); the lists and checks still show.
   let viewerFailed = false;
-  let editor = null;
-  let editTimer = 0;
+  // Aborted when the design view closes: listings, reads and parses stop with it.
+  let view = null;
+  let loadToken = 0;
+  const models = new Map();
+  const reads = new Map();
   const timers = new Set();
   const later = (fn, ms) => {
     const id = setTimeout(() => {
@@ -125,155 +139,6 @@ export function mountPage(root, context) {
     clearTimeout(id);
     timers.delete(id);
   };
-
-  // -- engine ------------------------------------------------------------------
-
-  let wasmBytes = null;
-  const getWasm = () => {
-    wasmBytes ??= loadWasm(WASM_INFO, { base: import.meta.url, signal }).catch(
-      (error) => {
-        wasmBytes = null;
-        throw error;
-      },
-    );
-    return wasmBytes;
-  };
-  let runner = null;
-  const engine = () => (runner ??= createScadRunner({ getWasm }));
-
-  const errorText = (code) => {
-    if (code === "timeout") return null;
-    if (code === "load:integrity") return text.errors.integrity;
-    if (typeof code === "string" && code.startsWith("load:"))
-      return text.errors.load;
-    if (code === "worker") return text.errors.worker;
-    if (code === "wasm") return text.errors.wasm;
-    return code;
-  };
-
-  /** Render OpenSCAD source and prepare the mesh; resolves an outcome, never rejects unless the page closed. */
-  async function renderSource(code, mode) {
-    const result = await engine().render(
-      mode === "live" ? capFn(code, LIVE_FN_CAP) : code,
-      { mode },
-    );
-    if (result.superseded) return { superseded: true };
-    if (!result.ok) {
-      const limit = Math.round((LIMITS_MS[mode] ?? LIMITS_MS.final) / 1000);
-      return {
-        ok: false,
-        error:
-          result.error === "timeout"
-            ? text.errors.timeout(limit)
-            : errorText(result.error),
-        errorLines: result.errorLines,
-        warnings: result.warnings,
-        ms: result.ms,
-        engine: isEngineFailure(result.error),
-        // OpenSCAD never started (its wasm did not load or compile), as opposed
-        // to a render that timed out or a Worker that crashed mid-render.
-        startup:
-          typeof result.error === "string" &&
-          (result.error.startsWith("load:") || result.error === "wasm"),
-      };
-    }
-    return {
-      ok: true,
-      model: result.model,
-      metrics: result.metrics,
-      stl: result.stl,
-      errorLines: result.errorLines,
-      warnings: result.warnings,
-      ms: result.ms,
-    };
-  }
-
-  const record = (outcome) =>
-    outcome.ok
-      ? {
-          ok: true,
-          partial: false,
-          bbox_mm: outcome.metrics.bbox_mm,
-          bbox_min_mm: outcome.metrics.bbox_min_mm,
-          bbox_max_mm: outcome.metrics.bbox_max_mm,
-          volume_mm3: outcome.metrics.volume_mm3,
-          manifold: outcome.metrics.manifold,
-          triangles: outcome.metrics.triangles,
-          error_lines: (outcome.errorLines ?? []).slice(0, 50),
-          ms: Math.max(0, Math.round(outcome.ms ?? 0)),
-        }
-      : {
-          ok: false,
-          partial: false,
-          error: String(outcome.error ?? "render failed").slice(0, 4000),
-          error_lines: (outcome.errorLines ?? []).slice(0, 50),
-          ms: Math.max(0, Math.round(outcome.ms ?? 0)),
-        };
-
-  let displaySeq = 0;
-  /**
-   * Render and show. Only the newest request updates the view; a failure keeps
-   * the last good mesh on screen. Resolves the outcome.
-   */
-  async function show(code, mode, { partial = false } = {}) {
-    const seq = ++displaySeq;
-    setOverlay(
-      partial ? text.partial : wasmBytes ? text.rendering : text.loadingEngine,
-    );
-    let outcome;
-    try {
-      outcome = await renderSource(code, mode);
-    } catch {
-      return { ok: false, error: "closed" };
-    }
-    if (signal.aborted || outcome.superseded) return outcome;
-    if (seq !== displaySeq) return outcome;
-    if (outcome.ok) {
-      S.shown = {
-        partial,
-        metrics: outcome.metrics,
-        warnings: outcome.warnings,
-      };
-      S.lastGood = S.shown;
-      if (!partial && outcome.stl) S.stl = outcome.stl;
-      stlButton.disabled = !S.stl;
-      drawDraft(outcome.model, partial);
-      editor?.markErrors(partial ? [] : outcome.errorLines);
-      setOverlay(partial ? text.partial : null);
-      if (S.narrow && S.phone !== "preview") phoneDot.hidden = false;
-    } else {
-      S.shown = {
-        error: outcome.error,
-        errorLines: outcome.errorLines,
-        partial,
-      };
-      if (!partial) editor?.markErrors(outcome.errorLines);
-      // A partial prefix that fails is expected mid-stream: keep quiet and keep the last mesh.
-      // When the engine itself could not start, say why here: the draft is not
-      // at fault, and the reason otherwise shows only on the Code tab.
-      setOverlay(
-        partial
-          ? text.partial
-          : outcome.startup && outcome.error
-            ? `${text.renderFailed}: ${outcome.error}`
-            : `${text.renderFailed}. ${viewer?.hasDraft() ? text.lastGood : ""}`,
-        !partial,
-      );
-    }
-    renderInfo();
-    renderErrors();
-    return outcome;
-  }
-
-  /** A viewer failure (no WebGL) must not keep a render from being reported. */
-  function drawDraft(model, partial) {
-    try {
-      viewerReady()?.setDraft(model, { partial });
-    } catch {
-      viewerFailed = true;
-      setOverlay(text.errors.webgl, true);
-    }
-  }
 
   // -- shell -------------------------------------------------------------------
 
@@ -293,11 +158,12 @@ export function mountPage(root, context) {
   trashToggle.setAttribute("aria-pressed", "false");
   const newButton = button(text.newDesign, () => createDesign(), "primary");
   listBar.append(listTitle, element("span", "grow"), trashToggle, newButton);
+  const listBanner = element("div");
   const listNotice = element("div", "notice");
   listNotice.hidden = true;
   listNotice.setAttribute("role", "status");
   const list = element("ul", "list");
-  listView.append(listBar, listNotice, list);
+  listView.append(listBar, listBanner, listNotice, list);
 
   const designView = element("div", "design");
   designView.hidden = true;
@@ -307,16 +173,14 @@ export function mountPage(root, context) {
   const renameButton = button(text.rename, () => renameDesign(S.design, title));
   const runStatus = element("span", "muted");
   runStatus.setAttribute("role", "status");
-  const finalizeButton = button(text.finalize, () => finalize(), "primary");
-  finalizeButton.title = text.finalizeHint;
   designBar.append(
     back,
     title,
     renameButton,
     element("span", "grow"),
     runStatus,
-    finalizeButton,
   );
+  const designBanner = element("div");
   const designNotice = element("div", "notice");
   designNotice.hidden = true;
   designNotice.setAttribute("role", "status");
@@ -324,7 +188,7 @@ export function mountPage(root, context) {
   const phoneTabs = element("nav", "phone-tabs");
   phoneTabs.setAttribute("role", "tablist");
   const phoneButtons = {};
-  for (const key of ["prompt", "preview", "code"]) {
+  for (const key of ["prompt", "preview"]) {
     const node = button(text.tabs[key], () => setPhone(key));
     node.setAttribute("role", "tab");
     phoneButtons[key] = node;
@@ -348,33 +212,34 @@ export function mountPage(root, context) {
   messages.append(historyBox, liveBox);
   let shownIds = [];
   const composer = element("form", "composer");
+  const viewingNote = element("div", "muted viewing");
+  viewingNote.hidden = true;
   const promptBox = element("textarea");
   promptBox.placeholder = text.promptPlaceholder;
   promptBox.setAttribute("aria-label", text.promptPlaceholder);
   promptBox.maxLength = 8000;
-  const modelSelect = element("select");
-  modelSelect.setAttribute("aria-label", text.model);
-  const thinkingLabel = element("label");
-  const thinking = element("input");
-  thinking.type = "checkbox";
-  thinking.checked = storage.get("thinking") === "1";
-  thinking.addEventListener("change", () =>
-    storage.set("thinking", thinking.checked ? "1" : "0"),
-  );
-  thinkingLabel.append(thinking, ` ${text.thinking}`);
+  // The chat composer's model picker, mode and reasoning effort, drawn by the
+  // host; an older host has none, and the server's default model and mode apply.
+  const runControls = element("div", "run-controls");
+  let controls = null;
+  try {
+    controls = context.composerControls?.mount(runControls) ?? null;
+  } catch {
+    controls = null;
+  }
+  runControls.hidden = !controls;
   const stopButton = button(text.stop, () => stopRun());
   stopButton.hidden = true;
   const sendButton = element("button", "primary", text.send);
   sendButton.type = "submit";
   const composerRow = element("div", "row");
   composerRow.append(
-    modelSelect,
-    thinkingLabel,
+    runControls,
     element("span", "grow"),
     stopButton,
     sendButton,
   );
-  composer.append(promptBox, composerRow);
+  composer.append(viewingNote, promptBox, composerRow);
   chat.append(messages, composer);
 
   const divider = element("button", "divider");
@@ -387,15 +252,29 @@ export function mountPage(root, context) {
 
   const work = element("section", "work");
   work.dataset.tab = "preview";
-  const tabs = element("div", "tabs");
+  const head = element("div", "tabs");
+  const versionLabel = element("label", "version");
+  const versionSelect = element("select");
+  versionSelect.setAttribute("aria-label", text.version);
+  versionLabel.append(element("span", "muted", text.version), versionSelect);
+  versionSelect.addEventListener("change", () => {
+    const n = Number(versionSelect.value);
+    if (!S.versions.includes(n)) return;
+    S.follow = n === newest();
+    S.selected = n;
+    renderViewing();
+    showVersion(n);
+  });
+  const tabs = element("div", "tablist");
   tabs.setAttribute("role", "tablist");
   const tabButtons = {};
-  for (const key of ["preview", "code", "parameters", "versions"]) {
+  for (const key of TABS) {
     const node = button(text.tabs[key], () => setTab(key));
     node.setAttribute("role", "tab");
     tabButtons[key] = node;
     tabs.append(node);
   }
+  head.append(versionLabel, tabs);
 
   // Preview panel
   const previewPanel = element("div", "panel preview");
@@ -405,73 +284,44 @@ export function mountPage(root, context) {
     node.setAttribute("aria-label", text.viewLabel(label));
     return node;
   };
-  const compareButtons = {};
-  const compareGroup = element("span");
-  compareGroup.hidden = true;
-  for (const key of ["draft", "final", "both"]) {
-    compareButtons[key] = button(text.compare[key], () => setCompare(key));
-    compareGroup.append(compareButtons[key]);
-  }
-  // The draft as rendered, for a slicer or another CAD tool.
-  const stlButton = button(text.downloadStl, () => {
-    if (!S.stl) return;
-    const url = URL.createObjectURL(new Blob([S.stl], { type: "model/stl" }));
-    const link = element("a");
-    link.href = url;
-    link.download = `${(S.design?.title || "design").replace(/[^\p{L}\p{N}._-]+/gu, "-").slice(0, 80)}.stl`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  });
-  stlButton.disabled = true;
   toolbar.append(
     button(text.fit, () => viewer?.fit()),
     viewButton(text.top, VIEWS.top),
     viewButton(text.front, VIEWS.front),
     viewButton(text.iso, VIEWS.iso),
-    stlButton,
-    element("span", "grow"),
-    compareGroup,
   );
+  const stage = element("div", "stage");
   const viewport = element("div", "viewport");
-  const placeholder = element("div", "placeholder", text.noModel);
+  const placeholder = element("div", "placeholder", text.noVersion);
   const overlay = element("div", "overlay");
   overlay.hidden = true;
   overlay.setAttribute("role", "status");
   viewport.append(placeholder, overlay);
+  const bodyList = element("ul", "bodies");
+  bodyList.setAttribute("aria-label", text.bodies);
+  stage.append(viewport, bodyList);
   const info = element("div", "info");
-  const finalBox = element("div", "final");
-  finalBox.hidden = true;
-  previewPanel.append(toolbar, viewport, info, finalBox);
+  previewPanel.append(toolbar, stage, info);
 
-  // Code panel
+  const viewsPanel = element("div", "panel views");
+  const checksPanel = element("div", "panel checks");
   const codePanel = element("div", "panel code");
-  const held = element("div", "held", text.held);
-  held.hidden = true;
-  const editorHost = element("div", "editor");
-  const errors = element("div", "errors");
-  errors.hidden = true;
-  const codeBar = element("div", "codebar");
-  const saveState = element("span", "muted");
-  const saveButton = button(text.save, () => saveEdits());
-  codeBar.append(
-    saveState,
-    element("span", "grow"),
-    element("span", "muted", text.saveHint),
-    saveButton,
+  const codeBox = element("pre", "source");
+  codeBox.tabIndex = 0;
+  codeBox.setAttribute("aria-label", text.tabs.code);
+  codePanel.append(codeBox);
+  const filesPanel = element("div", "panel files");
+
+  work.append(
+    head,
+    previewPanel,
+    viewsPanel,
+    checksPanel,
+    codePanel,
+    filesPanel,
   );
-  codePanel.append(held, editorHost, errors, codeBar);
-
-  // Parameters and versions panels
-  const paramsPanel = element("div", "panel parameters");
-  const paramsList = element("div", "params");
-  paramsPanel.append(paramsList);
-  const versionsPanel = element("div", "panel versions");
-  const versionsList = element("ol");
-  versionsPanel.append(versionsList);
-
-  work.append(tabs, previewPanel, codePanel, paramsPanel, versionsPanel);
   split.append(chat, divider, work);
-  designView.append(designBar, designNotice, phoneTabs, split);
+  designView.append(designBar, designBanner, designNotice, phoneTabs, split);
   app.append(listView, designView);
 
   const storedLeft = Number(storage.get("left"));
@@ -498,9 +348,29 @@ export function mountPage(root, context) {
     if (signal.aborted) return;
     setNotice(node, busy(error) ? text.errors.busy : text.errors.action);
   };
+  const newest = () => S.versions[S.versions.length - 1] ?? 0;
+
+  /** The setup commands, shown while the host runs no sandbox containers. */
+  function renderBanner() {
+    listBanner.replaceChildren();
+    designBanner.replaceChildren();
+    if (S.container) return;
+    const banner = element("div", "notice info banner");
+    banner.setAttribute("role", "status");
+    const commands = element("pre");
+    commands.textContent = text.container.commands.join("\n");
+    banner.append(
+      element("strong", "", text.container.title),
+      element("p", "", text.container.body),
+      commands,
+      element("p", "", text.container.after),
+    );
+    // Only in the view on screen, so the page holds one copy of the commands.
+    (S.design ? designBanner : listBanner).append(banner);
+  }
 
   function setOverlay(message, isError = false) {
-    // A browser without WebGL keeps saying so once a render has nothing else to show.
+    // A browser without WebGL keeps saying so once nothing else is to be said.
     if (!message && viewerFailed) {
       message = text.errors.webgl;
       isError = true;
@@ -511,24 +381,25 @@ export function mountPage(root, context) {
   }
 
   function setTab(key) {
+    S.tab = key;
     work.dataset.tab = key;
     for (const [name, node] of Object.entries(tabButtons))
       node.setAttribute("aria-selected", String(name === key));
     if (key === "preview") viewer?.resize();
+    if (key === "code") renderCode();
   }
   function setPhone(key) {
     S.phone = key;
     app.dataset.phone = key;
     for (const [name, node] of Object.entries(phoneButtons))
       node.setAttribute("aria-selected", String(name === key));
-    if (key === "preview") phoneDot.hidden = true;
-    if (key !== "prompt") setTab(key);
-    if (S.finalKey) renderFinal();
+    if (key === "preview") {
+      phoneDot.hidden = true;
+      if (S.tab === "preview") viewer?.resize();
+    }
   }
   setTab("preview");
   setPhone("preview");
-
-  // -- viewer and editor (created with the design view, released with it) --------
 
   function viewerReady() {
     if (viewer) return viewer;
@@ -540,6 +411,7 @@ export function mountPage(root, context) {
         onLost: () => {
           viewerFailed = true;
           setOverlay(text.errors.webgl, true);
+          renderPlaceholder();
         },
       });
     } catch {
@@ -548,59 +420,6 @@ export function mountPage(root, context) {
       return null;
     }
     return viewer;
-  }
-
-  function ensureEditor() {
-    if (editor) return editor;
-    editor = createEditor(editorHost, {
-      doc: S.source,
-      root: root.getRootNode(),
-      label: text.tabs.code,
-      onChange(value) {
-        if (S.run) return;
-        S.source = value;
-        renderSaveState();
-        cancel(editTimer);
-        editTimer = later(() => {
-          if (S.source.trim()) show(S.source, "live");
-          renderParams();
-        }, EDIT_DEBOUNCE_MS);
-      },
-      onSave: () => saveEdits(),
-    });
-    return editor;
-  }
-
-  function renderSaveState() {
-    const dirty = S.source !== S.savedSource;
-    saveState.textContent = dirty ? text.unsaved : S.design ? text.saved : "";
-    saveButton.disabled = !dirty || !!S.run || !!S.saving;
-  }
-
-  function renderInfo() {
-    info.replaceChildren();
-    const shown = S.shown?.metrics ? S.shown : S.lastGood;
-    placeholder.hidden = !!viewer?.hasDraft() || viewerFailed;
-    if (!shown?.metrics) return;
-    const m = shown.metrics;
-    info.append(
-      element("span", "", text.size(...m.bbox_mm.map((v) => number.format(v)))),
-      element("span", "", text.volume(number.format(m.volume_mm3))),
-      element("span", m.manifold ? "" : "error", text.manifold(m.manifold)),
-    );
-    if (shown.partial) info.append(element("span", "muted", text.partial));
-  }
-
-  function renderErrors() {
-    const shown = S.shown;
-    errors.replaceChildren();
-    errors.hidden = !shown?.error || shown.partial;
-    if (errors.hidden) return;
-    errors.append(element("div", "", shown.error));
-    for (const line of shown.errorLines ?? [])
-      errors.append(
-        button(text.line(line), () => editor?.goToLine(line), "link"),
-      );
   }
 
   // -- divider and width ----------------------------------------------------------
@@ -644,67 +463,43 @@ export function mountPage(root, context) {
     S.narrow = narrow;
     app.classList.toggle("narrow", narrow);
     setPhone(narrow ? S.phone : "preview");
-    if (!narrow) setTab(work.dataset.tab === "code" ? "code" : "preview");
-    if (S.finalKey) renderFinal();
+    viewer?.resize();
   });
   widthObserver.observe(app);
 
-  // -- models -----------------------------------------------------------------------
+  // -- run options ------------------------------------------------------------------
 
-  function renderModels() {
-    const models = context.models;
-    // The user's last pick on this page, else the host's current model.
-    const chosen = storage.get("model") ?? models?.defaultName ?? "";
-    modelSelect.replaceChildren(new Option(text.defaultModel, ""));
-    for (const model of models?.list ?? []) {
-      if (typeof model?.name !== "string") continue;
-      modelSelect.append(
-        new Option(model.display_name || model.name, model.name),
-      );
+  /** What the main chat would send for the chosen model and mode, as the run's context. */
+  const runOptions = () => {
+    let runContext;
+    try {
+      runContext = controls?.runContext();
+    } catch {
+      return {};
     }
-    const names = new Set([...modelSelect.options].map((o) => o.value));
-    modelSelect.value = names.has(chosen)
-      ? chosen
-      : names.has(models?.defaultName ?? "")
-        ? models.defaultName
-        : "";
-    if (!modelSelect.value) modelSelect.value = "";
-    modelSelect.hidden = modelSelect.options.length <= 1;
-    // A hidden select cannot take focus, so a list that had not loaded yet is
-    // looked up again here rather than on focus.
-    cancel(modelTimer);
-    if (modelSelect.hidden && S.design && modelTries < MODEL_RETRIES) {
-      modelTries += 1;
-      modelTimer = later(renderModels, MODEL_RETRY_MS);
-    }
-  }
-  let modelTimer = 0;
-  let modelTries = 0;
-  promptBox.addEventListener("focus", () => {
-    if (modelSelect.hidden) renderModels();
-  });
-  modelSelect.addEventListener("change", () =>
-    storage.set("model", modelSelect.value),
-  );
-  modelSelect.addEventListener("focus", renderModels);
-  const runOptions = () => ({
-    ...(modelSelect.value ? { model_name: modelSelect.value } : {}),
-    mode: thinking.checked ? "thinking" : "flash",
-  });
+    return runContext &&
+      typeof runContext === "object" &&
+      !Array.isArray(runContext)
+      ? { context: runContext }
+      : {};
+  };
 
   // -- list view ---------------------------------------------------------------------
 
   async function loadList() {
     setNotice(listNotice, null);
     list.replaceChildren(element("li", "empty", text.loading));
-    let designs;
+    let loaded;
     try {
-      ({ designs } = await call("list_designs", { trash: S.trash }));
+      loaded = await call("list_designs", { trash: S.trash });
     } catch (error) {
       list.replaceChildren();
       failNotice(listNotice, error);
       return;
     }
+    S.container = loaded?.container !== false;
+    renderBanner();
+    const designs = loaded?.designs;
     list.replaceChildren();
     if (!Array.isArray(designs) || !designs.length) {
       list.append(
@@ -719,7 +514,7 @@ export function mountPage(root, context) {
       const meta = element(
         "span",
         "meta",
-        `${text.versionCount(design.versions ?? 0)} · ${formatTime(design.deleted_at ?? design.updated_at)}`,
+        formatTime(design.deleted_at ?? design.updated_at),
       );
       const actions = element("div", "actions");
       if (S.trash) {
@@ -811,8 +606,6 @@ export function mountPage(root, context) {
 
   // -- design view ---------------------------------------------------------------------
 
-  const headVersion = () => S.versions.find((v) => v.id === S.headId) ?? null;
-
   async function openDesign(designId) {
     setNotice(listNotice, null);
     let loaded;
@@ -822,36 +615,50 @@ export function mountPage(root, context) {
       failNotice(listNotice, error);
       return;
     }
+    if (!ID.test(loaded?.design?.id ?? "")) {
+      setNotice(listNotice, text.errors.action);
+      return;
+    }
     listView.hidden = true;
     designView.hidden = false;
     setNotice(designNotice, null);
+    view?.abort();
+    view = new AbortController();
     S.design = loaded.design;
-    S.versions = Array.isArray(loaded.versions) ? loaded.versions : [];
-    S.headId = S.design.head_version_id ?? null;
-    S.shown = S.lastGood = S.stl = null;
-    stlButton.disabled = true;
-    S.finalKey = null;
+    S.folder = designFolder(loaded.folder);
+    S.container = loaded.container !== false;
+    S.versions = [];
+    S.selected = null;
+    S.follow = true;
+    S.loaded = null;
+    S.hidden = new Set();
     S.note = null;
     S.messages = [];
+    models.clear();
+    reads.clear();
     title.textContent = S.design.title || text.untitled;
     viewer?.reset();
-    modelTries = 0;
-    renderModels();
-    const head = headVersion();
-    let scad = head?.scad ?? "";
-    if (head && head.scad == null)
-      scad = (await fetchVersion(head.id))?.scad ?? "";
-    setSource(scad);
-    ensureEditor().setDoc(scad);
-    renderAll();
+    setOverlay(null);
+    renderBanner();
+    renderPicker();
+    renderViewing();
+    renderVersion();
+    renderRunState();
+    renderMessages();
     loadMessages();
-    if (head && scad.trim()) renderVersion(head, scad);
+    refresh().catch(() => {});
     resumeRun();
   }
 
   function closeDesign() {
     stopFollowing();
+    view?.abort();
+    view = null;
+    loadToken += 1;
     S.design = null;
+    S.loaded = null;
+    models.clear();
+    reads.clear();
     designView.hidden = true;
     listView.hidden = false;
     viewer?.dispose();
@@ -861,409 +668,523 @@ export function mountPage(root, context) {
     loadList();
   }
 
-  function setSource(scad) {
-    S.source = scad;
-    S.savedSource = scad;
-    editor?.setDoc(scad);
-    renderSaveState();
-    renderParams();
+  // -- version folders ------------------------------------------------------------------
+
+  const viewSignal = () => AbortSignal.any([signal, view.signal]);
+
+  /** One folder of the design's outputs, or null when it does not exist (yet). */
+  async function listFolder(path) {
+    try {
+      return await files.list(S.design.thread_id, path, {
+        signal: viewSignal(),
+      });
+    } catch (error) {
+      if (error?.status === 404) return null;
+      throw error;
+    }
   }
 
-  async function fetchVersion(versionId) {
+  /**
+   * A file's URL, or null when the host refuses its path. Names come from
+   * model-run code, so one the host will not link is left out rather than
+   * stopping the rest of the version from showing.
+   */
+  function fileUrl(entry, options) {
     try {
-      const { version } = await call("get_version", {
-        design_id: S.design.id,
-        version_id: versionId,
-      });
-      return version;
-    } catch (error) {
-      failNotice(designNotice, error);
+      return files.url(S.design.thread_id, entry.path, options);
+    } catch {
       return null;
     }
   }
 
-  /** Render a stored version; report the result when none is stored yet. */
-  async function renderVersion(version, scad) {
-    const outcome = await show(scad, "final");
-    if (shouldReport(version, outcome)) await report(version.id, outcome);
-    return outcome;
-  }
-
-  async function report(versionId, outcome) {
-    try {
-      const { version } = await call("report_render", {
-        design_id: S.design.id,
-        version_id: versionId,
-        render: record(outcome),
+  /** A JSON report as an object; undefined when absent, null when unreadable. */
+  function readJson(entry) {
+    if (!entry) return Promise.resolve(undefined);
+    if (typeof entry.size === "number" && entry.size > MAX_JSON_BYTES)
+      return Promise.resolve(null);
+    const key = fileKey(entry);
+    const cached = reads.get(key);
+    if (cached) return cached;
+    const pending = files
+      .read(S.design.thread_id, entry.path, {
+        signal: viewSignal(),
+        maxBytes: MAX_JSON_BYTES,
+      })
+      .then(parseJson)
+      .catch(() => {
+        reads.delete(key);
+        return null;
       });
-      upsertVersion(version);
-    } catch (error) {
-      failNotice(designNotice, error);
+    return remember(reads, key, pending);
+  }
+
+  /** A body's STL, parsed in its own Worker by cad-preview's capped parser. */
+  function modelOf(entry) {
+    const key = fileKey(entry);
+    const cached = models.get(key);
+    if (cached) return cached;
+    const own = viewSignal();
+    const pending = files
+      .read(S.design.thread_id, entry.path, { signal: own })
+      .then((data) => prepareInWorker(data, "stl", own));
+    pending.catch(() => models.delete(key));
+    return remember(models, key, pending);
+  }
+
+  // The run whose final listing is in flight: it may still bring the first new version.
+  let settling = null;
+  let refreshTimer = 0;
+  let refreshing = null;
+  let refreshAgain = false;
+  const scheduleRefresh = (ms = REFRESH_MS) => {
+    cancel(refreshTimer);
+    // A failure must not become an unhandled rejection: the next tool result,
+    // poll or settle lists the folder again.
+    refreshTimer = later(() => refresh().catch(() => {}), ms);
+  };
+
+  /** List the design folder and show the chosen version; one listing at a time. */
+  function refresh() {
+    if (refreshing) {
+      refreshAgain = true;
+      return refreshing;
     }
+    refreshing = (async () => {
+      do {
+        refreshAgain = false;
+        await refreshOnce();
+      } while (refreshAgain && S.design && !signal.aborted);
+    })().finally(() => {
+      refreshing = null;
+    });
+    return refreshing;
   }
 
-  function upsertVersion(version) {
-    if (!version || typeof version.id !== "string") return;
-    const index = S.versions.findIndex((v) => v.id === version.id);
-    if (index >= 0) S.versions[index] = { ...S.versions[index], ...version };
-    else S.versions.push(version);
-    renderVersions();
-    renderFinalizeButton();
-  }
-
-  async function reloadDesign() {
-    if (!S.design) return;
+  async function refreshOnce() {
+    const design = S.design;
+    if (!design || !ID.test(design.thread_id ?? "")) return;
+    if (!files) {
+      setNotice(designNotice, text.errors.noFiles, "info");
+      return;
+    }
+    let entries;
     try {
-      const loaded = await call("get_design", { design_id: S.design.id });
-      S.design = loaded.design;
-      S.versions = Array.isArray(loaded.versions) ? loaded.versions : [];
-      S.headId = S.design.head_version_id ?? null;
-      title.textContent = S.design.title || text.untitled;
-    } catch (error) {
-      failNotice(designNotice, error);
+      entries = await listFolder(S.folder);
+    } catch {
+      if (S.design === design && !signal.aborted)
+        setNotice(designNotice, text.errors.list);
+      return;
     }
-    renderAll();
+    if (S.design !== design) return;
+    const before = newest();
+    S.versions = versionNumbers(entries ?? []);
+    if (newest() > before && S.narrow && S.phone !== "preview")
+      phoneDot.hidden = false;
+    // A run's first new version is shown even when the user was looking at an
+    // older one: that is the answer to what they just asked.
+    const run = S.run ?? settling;
+    if (run && !run.jumped && newest() > run.newestBefore) {
+      run.jumped = true;
+      S.follow = true;
+    }
+    const n = pickVersion(S.versions, {
+      selected: S.selected,
+      follow: S.follow,
+    });
+    renderPicker(n);
+    renderViewing();
+    renderPlaceholder();
+    await showVersion(n);
   }
 
-  function renderAll() {
-    renderVersions();
-    renderFinalizeButton();
-    renderFinal();
-    renderRunState();
-    renderInfo();
-    renderMessages();
+  /** Read version `n`'s folder and show it; a newer request supersedes this one. */
+  async function showVersion(n) {
+    const token = ++loadToken;
+    const design = S.design;
+    S.selected = n;
+    renderPicker(n);
+    if (n === null) {
+      S.loaded = null;
+      viewer?.keep([]);
+      renderVersion();
+      return;
+    }
+    const base = `${S.folder}/v${n}`;
+    if (S.loaded?.n !== n) setOverlay(text.loadingVersion(n));
+    let entries;
+    let views = [];
+    let print = [];
+    try {
+      entries = (await listFolder(base)) ?? [];
+      if (hasFolder(entries, "views"))
+        views = (await listFolder(`${base}/views`)) ?? [];
+      if (hasFolder(entries, "print"))
+        print = (await listFolder(`${base}/print`)) ?? [];
+    } catch {
+      if (token === loadToken && !signal.aborted) {
+        setOverlay(null);
+        setNotice(designNotice, text.errors.list);
+      }
+      return;
+    }
+    if (token !== loadToken || S.design !== design) return;
+    const top = filesByName(entries);
+    const printFiles = filesByName(print);
+    const [report, check, printReport] = await Promise.all([
+      readJson(top.get("report.json")),
+      readJson(top.get("check.json")),
+      readJson(printFiles.get("print.json") ?? top.get("print.json")),
+    ]);
+    if (token !== loadToken || S.design !== design) return;
+    S.loaded = {
+      n,
+      base,
+      top,
+      viewFiles: filesByName(views),
+      printFiles,
+      report,
+      check,
+      print: printReport,
+      bodies: bodiesOf(report, top),
+      failed: new Set(),
+    };
+    renderVersion();
+    await drawBodies(token);
   }
 
-  // -- parameters ---------------------------------------------------------------------
+  /** Each body's mesh in its colour; a body keeps its mesh until the new one is ready. */
+  async function drawBodies(token) {
+    const loaded = S.loaded;
+    const shown = loaded.bodies.filter((body) => body.file);
+    viewer?.keep(shown.map((body) => body.name));
+    for (const body of shown) {
+      let model;
+      try {
+        model = await modelOf(loaded.top.get(body.file));
+      } catch {
+        if (token !== loadToken || signal.aborted) return;
+        loaded.failed.add(body.name);
+        // An older version's mesh of the same name must not stand in for it.
+        viewer?.keep(
+          shown
+            .filter((other) => !loaded.failed.has(other.name))
+            .map((other) => other.name),
+        );
+        renderBodies();
+        continue;
+      }
+      if (token !== loadToken) return;
+      const target = viewerReady();
+      if (!target) continue;
+      try {
+        target.setBody(body.name, model, {
+          color: body.color,
+          visible: !S.hidden.has(body.name),
+        });
+      } catch {
+        viewerFailed = true;
+      }
+    }
+    if (token !== loadToken) return;
+    setOverlay(null);
+    renderPlaceholder();
+  }
 
-  let sliderTimer = 0;
-  let commitTimer = 0;
-  const paramValues = (scad) =>
-    Object.fromEntries(
-      parseParameters(scad)
-        .slice(0, 100)
-        .map((p) => [p.name, p.value]),
+  function renderPicker(selected = S.selected) {
+    const top = newest();
+    versionSelect.replaceChildren(
+      ...[...S.versions]
+        .reverse()
+        .map((n) => new Option(text.versionLabel(n, n === top), String(n))),
     );
+    versionSelect.value = selected === null ? "" : String(selected);
+    versionSelect.disabled = S.versions.length < 2;
+    versionLabel.hidden = !S.versions.length;
+  }
 
-  function renderParams() {
-    if (
-      paramsList.contains(root.getRootNode().activeElement) &&
-      paramsList.dataset.source === S.source
-    )
-      return;
-    paramsList.dataset.source = S.source;
-    paramsList.replaceChildren();
-    const params = parseParameters(S.source);
-    if (!params.length) {
-      paramsList.append(element("p", "muted", text.noParams));
-      return;
-    }
-    let pending = S.source;
-    for (const param of params) {
-      const row = element("div", "param");
+  function renderViewing() {
+    const older = S.selected !== null && S.selected < newest() && !S.follow;
+    viewingNote.hidden = !older;
+    viewingNote.textContent = older ? text.viewingOlder(S.selected) : "";
+  }
+
+  function renderPlaceholder() {
+    placeholder.hidden = S.versions.length > 0 || viewerFailed;
+  }
+
+  function renderVersion() {
+    renderBodies();
+    renderInfo();
+    renderViews();
+    renderChecks();
+    renderFiles();
+    if (S.tab === "code") renderCode();
+    renderPlaceholder();
+    if (!S.loaded) setOverlay(null);
+  }
+
+  function renderBodies() {
+    bodyList.replaceChildren();
+    const loaded = S.loaded;
+    bodyList.hidden = !loaded?.bodies.length;
+    if (!loaded) return;
+    for (const body of loaded.bodies) {
+      const item = element("li", "body");
       const label = element("label");
-      const name = element("span", "", param.name);
-      const value = element(
+      const toggle = element("input");
+      toggle.type = "checkbox";
+      toggle.checked = !S.hidden.has(body.name);
+      toggle.disabled = !body.file;
+      toggle.setAttribute("aria-label", text.showBody(body.name));
+      toggle.addEventListener("change", () => {
+        if (toggle.checked) S.hidden.delete(body.name);
+        else S.hidden.add(body.name);
+        viewer?.setVisible(body.name, toggle.checked);
+      });
+      const swatch = element("span", "swatch");
+      swatch.style.background = body.color;
+      label.append(toggle, swatch, element("span", "name", body.name));
+      item.append(label);
+      const facts = [];
+      if (body.size) facts.push(text.size(...body.size.map(fmt)));
+      if (body.volume !== null) facts.push(text.volume(fmt(body.volume)));
+      if (body.mass !== null) facts.push(text.mass(fmt(body.mass)));
+      if (facts.length) item.append(element("span", "meta", facts.join(" · ")));
+      if (body.watertight === false && !body.error)
+        item.append(element("span", "meta error", text.open));
+      if (body.error)
+        item.append(element("span", "meta error", text.bodyFailed(body.error)));
+      else if (!body.file)
+        item.append(element("span", "meta error", text.noStl));
+      else if (loaded.failed.has(body.name))
+        item.append(element("span", "meta error", text.bodyUnreadable));
+      bodyList.append(item);
+    }
+  }
+
+  function renderInfo() {
+    info.replaceChildren();
+    const loaded = S.loaded;
+    if (!loaded) return;
+    const summary = renderSummary(loaded.report);
+    info.append(
+      element(
         "span",
         "",
-        param.kind === "boolean" ? "" : number.format(param.value),
-      );
-      const input = element("input");
-      input.disabled = !!S.run;
-      input.setAttribute("aria-label", param.name);
-      if (param.kind === "boolean") {
-        input.type = "checkbox";
-        input.checked = param.value;
-        label.append(name, input);
-        row.append(label);
-        input.addEventListener("change", () =>
-          commitParam(withValues(S.source, { [param.name]: input.checked })),
-        );
-      } else {
-        input.type = "range";
-        input.min = String(param.min);
-        input.max = String(param.max);
-        input.step = String(param.step);
-        input.value = String(param.value);
-        label.append(name, value);
-        const range = element(
-          "span",
-          "range",
-          `${number.format(param.min)} – ${number.format(param.max)}${param.derived ? ` (${text.derived})` : ""}`,
-        );
-        row.append(label, input, range);
-        // Dragging re-renders locally only; releasing saves one version.
-        input.addEventListener("input", () => {
-          value.textContent = number.format(Number(input.value));
-          pending = withValues(S.source, { [param.name]: Number(input.value) });
-          cancel(sliderTimer);
-          sliderTimer = later(() => show(pending, "live"), SLIDER_DEBOUNCE_MS);
-        });
-        const commit = () => {
-          cancel(sliderTimer);
-          cancel(commitTimer);
-          commitTimer = 0;
-          commitParam(
-            withValues(S.source, { [param.name]: Number(input.value) }),
-          );
-        };
-        input.addEventListener("change", () => {
-          cancel(commitTimer);
-          commitTimer = later(commit, SLIDER_COMMIT_MS);
-        });
-        input.addEventListener("blur", () => {
-          if (commitTimer) commit();
-        });
-      }
-      paramsList.append(row);
-    }
+        text.summary(loaded.n, loaded.bodies.length, summary?.seconds ?? null),
+      ),
+    );
+    if (loaded.report === undefined)
+      info.append(element("span", "muted", text.rendering(loaded.n)));
   }
 
-  async function commitParam(scad) {
-    if (S.run || scad === S.savedSource) return;
-    S.source = scad;
-    // The focused slider already shows this value: keep its row (and the focus).
-    paramsList.dataset.source = scad;
-    editor?.setDoc(scad);
-    await saveVersion("slider");
-    renderParams();
-  }
-
-  // -- saving -----------------------------------------------------------------------------
-
-  async function saveEdits() {
-    if (S.run || S.source === S.savedSource || !S.design) return;
-    await saveVersion("hand");
-  }
-
-  /** Save the current source as a version (hand or slider), then render and report it. */
-  function saveVersion(source) {
-    if (S.saving) return S.saving;
-    const scad = S.source;
-    S.saving = (async () => {
-      renderSaveState();
-      let version;
-      try {
-        ({ version } = await call("save_version", {
-          design_id: S.design.id,
-          parent_id: S.headId,
-          scad,
-          params: paramValues(scad),
-          source,
-        }));
-      } catch (error) {
-        failNotice(designNotice, error);
-        return;
-      }
-      S.savedSource = scad;
-      S.headId = version.id;
-      upsertVersion(version);
-      const outcome = await show(scad, "final");
-      if (shouldReport(version, outcome)) await report(version.id, outcome);
-    })().finally(() => {
-      S.saving = null;
-      renderSaveState();
-      // Edits made while saving are saved next; a refused save is not retried
-      // with the same text (it would loop against the Gateway).
-      if (
-        S.source !== S.savedSource &&
-        shouldRetrySave({ now: S.source, attempted: scad, running: !!S.run })
-      )
-        saveEdits();
-    });
-    return S.saving;
-  }
-
-  // -- versions ----------------------------------------------------------------------------
-
-  function renderVersions() {
-    versionsList.replaceChildren();
-    const rows = timeline(S.versions, S.headId);
-    if (!rows.length) {
-      versionsList.append(element("li", "muted", text.versionsEmpty));
+  function renderViews() {
+    viewsPanel.replaceChildren();
+    const loaded = S.loaded;
+    const names = loaded ? viewImages(loaded.viewFiles) : [];
+    if (!names.length) {
+      viewsPanel.append(element("p", "muted pad", text.noViews));
       return;
     }
-    for (const row of rows) {
-      const item = element("li");
-      const node = button("", () => selectVersion(row.id));
-      node.disabled = !!S.run;
-      node.setAttribute("aria-current", row.isHead ? "true" : "false");
-      node.setAttribute("aria-pressed", String(row.isHead));
-      node.append(
-        element("span", "seq", `v${row.seq}`),
-        element("span", "", text.source[row.source] ?? row.source),
-        element(
-          "span",
-          row.status === "error" ? "error" : "muted",
-          text.status[row.status],
-        ),
-        element(
-          "span",
-          "muted",
-          row.createdAt ? formatTime(row.createdAt) : "",
-        ),
-      );
-      if (row.isHead) node.append(element("span", "chip", text.head));
-      if (row.final?.status)
-        node.append(
-          element(
-            "span",
-            "chip",
-            text.final[row.final.status] ?? row.final.status,
+    const grid = element("div", "gallery");
+    for (const name of names) {
+      const entry = loaded.viewFiles.get(name);
+      const url = fileUrl(entry);
+      if (!url) continue;
+      // A rewritten image (views run again) has a new time: the browser fetches it anew.
+      const src = `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(entry.modified_at ?? "")}`;
+      const figure = element("figure");
+      const link = element("a");
+      link.href = src;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      const image = element("img");
+      image.src = src;
+      image.alt = text.viewAlt(name);
+      image.loading = "lazy";
+      image.decoding = "async";
+      link.append(image);
+      figure.append(link, element("figcaption", "", name));
+      grid.append(figure);
+    }
+    viewsPanel.append(
+      grid.childElementCount ? grid : element("p", "muted pad", text.noViews),
+    );
+  }
+
+  function section(heading) {
+    const node = element("section", "check");
+    node.append(element("h3", "", heading));
+    checksPanel.append(node);
+    return node;
+  }
+  const bullets = (items) => {
+    const ul = element("ul");
+    for (const item of items) ul.append(element("li", "", item));
+    return ul;
+  };
+
+  function renderChecks() {
+    checksPanel.replaceChildren();
+    const loaded = S.loaded;
+    if (!loaded) {
+      checksPanel.append(element("p", "muted pad", text.noChecks));
+      return;
+    }
+    const c = text.checks;
+    const render = section(c.render);
+    const summary = renderSummary(loaded.report);
+    if (loaded.report === undefined)
+      render.append(element("p", "muted", text.rendering(loaded.n)));
+    else if (!summary)
+      render.append(element("p", "error", c.unreadable("report.json")));
+    else {
+      if (summary.seconds !== null)
+        render.append(element("p", "", c.seconds(fmt(summary.seconds))));
+      if (loaded.bodies.length > 1)
+        render.append(
+          summary.clashes.length
+            ? element("p", "error", c.asModelled)
+            : element("p", "", c.noOverlap),
+        );
+      if (summary.clashes.length)
+        render.append(
+          bullets(
+            summary.clashes.map((clash) =>
+              c.clash(clash.pair, fmt(clash.volume), clash.where),
+            ),
           ),
         );
-      if (row.branchFrom !== null)
-        node.append(element("span", "branch", text.branchFrom(row.branchFrom)));
-      if (row.error) node.title = row.error;
-      item.append(node);
-      versionsList.append(item);
-    }
-  }
-
-  async function selectVersion(versionId) {
-    if (S.run || !S.design) return;
-    if (S.source !== S.savedSource) await saveEdits();
-    let version = S.versions.find((v) => v.id === versionId);
-    if (!version) return;
-    let scad = version.scad;
-    if (scad == null) scad = (await fetchVersion(versionId))?.scad ?? "";
-    try {
-      const { design } = await call("set_head", {
-        design_id: S.design.id,
-        version_id: versionId,
-      });
-      if (design) S.design = design;
-    } catch (error) {
-      failNotice(designNotice, error);
-      return;
-    }
-    S.headId = versionId;
-    setSource(scad);
-    renderVersions();
-    renderFinalizeButton();
-    renderFinal();
-    if (S.narrow) setPhone("preview");
-    else setTab("preview");
-    version = S.versions.find((v) => v.id === versionId) ?? version;
-    if (scad.trim()) renderVersion(version, scad);
-  }
-
-  // -- finalize ------------------------------------------------------------------------------
-
-  function renderFinalizeButton() {
-    const head = headVersion();
-    const ready = !!head?.render?.ok && Array.isArray(head.render.bbox_mm);
-    finalizeButton.disabled = !!S.run || !ready;
-    finalizeButton.title = ready ? text.finalizeHint : text.finalizeNeedsRender;
-  }
-
-  async function finalize() {
-    const head = headVersion();
-    if (!head || S.run) return;
-    await startRun(
-      "finalize",
-      { design_id: S.design.id, version_id: head.id, ...runOptions() },
-      "finalize",
-    );
-  }
-
-  const artifactUrl = (name) =>
-    `/api/threads/${encodeURIComponent(S.design.thread_id)}/artifacts/mnt/user-data/outputs/${encodeURIComponent(name)}?download=true`;
-
-  function setCompare(mode) {
-    S.compare = mode;
-    for (const [key, node] of Object.entries(compareButtons))
-      node.setAttribute("aria-pressed", String(key === mode));
-    viewer?.setCompare(mode);
-  }
-
-  function renderFinal() {
-    const head = headVersion();
-    const final = head?.final;
-    finalBox.replaceChildren();
-    finalBox.hidden = !final?.status;
-    compareGroup.hidden = true;
-    if (!final?.status) {
-      if (S.finalKey) {
-        S.finalKey = null;
-        viewer?.setFinal(null);
+      if (summary.warnings.length) {
+        render.append(element("p", "", c.warnings));
+        render.append(bullets(summary.warnings));
       }
-      return;
+      if (summary.echo)
+        render.append(element("p", "muted", c.echo(summary.echo)));
     }
-    finalBox.className = `final ${final.status}`;
-    finalBox.append(
-      element("div", "state", text.final[final.status] ?? final.status),
-    );
-    if (final.message)
-      finalBox.append(element("div", "muted", String(final.message)));
-    const measured = Array.isArray(final.bbox_mm) ? final.bbox_mm : null;
-    const draft = Array.isArray(final.draft_bbox_mm)
-      ? final.draft_bbox_mm
-      : null;
-    if (measured && draft) {
-      const tolerance = Array.isArray(final.tolerance_mm)
-        ? triple(final.tolerance_mm)
-        : number.format(final.tolerance_mm ?? 0.5);
-      finalBox.append(
+
+    const collisions = section(c.collisions);
+    const check = checkSummary(loaded.check);
+    if (loaded.check === undefined)
+      collisions.append(element("p", "muted", c.notRun("check")));
+    else if (!check)
+      collisions.append(element("p", "error", c.unreadable("check.json")));
+    else {
+      collisions.append(
         element(
-          "div",
-          "",
-          text.bboxCheck(triple(draft), triple(measured), tolerance),
+          "p",
+          check.clashes ? "error" : "",
+          c.states(fmt(check.states), fmt(check.clashes), check.clearance),
+        ),
+      );
+      if (check.findings.length)
+        collisions.append(
+          bullets(
+            check.findings.map((f) =>
+              c.stateClash(f.pose, f.state, f.pair, fmt(f.volume)),
+            ),
+          ),
+        );
+      if (check.more)
+        collisions.append(element("p", "muted", c.more(check.more)));
+    }
+
+    const printing = section(c.print);
+    const print = printSummary(loaded.print);
+    if (loaded.print === undefined)
+      printing.append(element("p", "muted", c.notRun("print")));
+    else if (!print)
+      printing.append(element("p", "error", c.unreadable("print.json")));
+    else {
+      if (print.layout && print.bed)
+        printing.append(
+          element("p", "", c.layout(triple(print.layout), triple(print.bed))),
+        );
+      if (print.problems.length) {
+        printing.append(element("p", "error", c.problems));
+        printing.append(bullets(print.problems));
+        if (print.more)
+          printing.append(element("p", "muted", c.more(print.more)));
+      } else printing.append(element("p", "", c.noProblems));
+      const slicer = print.slicer;
+      printing.append(
+        element(
+          "p",
+          slicer.error ? "error" : "",
+          `${c.slicer}: ${
+            slicer.error ??
+            slicer.skipped ??
+            c.sliced(slicer.filament, slicer.time, slicer.settings)
+          }`,
         ),
       );
     }
-    const files = (Array.isArray(final.files) ? final.files : []).filter(
-      (name) => typeof name === "string" && /^[^/\\]{1,255}$/.test(name),
-    );
-    if (files.length && S.design?.thread_id) {
-      finalBox.append(element("div", "muted", text.files));
-      const ul = element("ul");
-      for (const name of files) {
-        const li = element("li");
-        const link = element("a", "", name);
-        link.href = artifactUrl(name);
-        link.download = name;
-        link.setAttribute("aria-label", text.download(name));
-        li.append(link);
-        ul.append(li);
-      }
-      finalBox.append(ul);
-    }
-    const glb = files.find(
-      (n) => /\.glb$/i.test(n) && !/\.failed\.glb$/i.test(n),
-    );
-    if (glb && (final.status === "built" || final.status === "mismatch")) {
-      compareGroup.hidden = false;
-      // Side by side on a wide screen; one at a time on a phone.
-      compareButtons.both.hidden = S.narrow;
-      if (S.narrow && S.compare === "both") S.compare = "final";
-      const key = `${head.id}:${glb}`;
-      if (S.finalKey !== key) {
-        S.finalKey = key;
-        loadFinal(glb, key);
-      } else setCompare(S.compare);
-    } else if (S.finalKey) {
-      S.finalKey = null;
-      viewer?.setFinal(null);
-    }
   }
 
-  async function loadFinal(name, key) {
-    if (!context.requestBackend || !S.design) return;
-    try {
-      const response = await context.requestBackend(
-        `/api/extensions/cad-design/designs/${S.design.id}/files/${encodeURIComponent(name)}`,
-      );
-      if (!response.ok) throw new Error(String(response.status));
-      const bytes = await response.arrayBuffer();
-      const model = await prepareInWorker(bytes, "glb", signal);
-      if (S.finalKey !== key || signal.aborted) return;
-      viewerReady()?.setFinal(model);
-      setCompare(S.compare);
-    } catch {
-      if (!signal.aborted && S.finalKey === key)
-        setNotice(designNotice, text.errors.action);
+  let codeKey = null;
+  async function renderCode() {
+    const loaded = S.loaded;
+    const entry = loaded?.top.get("model.scad");
+    if (!entry) {
+      codeKey = null;
+      codeBox.textContent = loaded ? text.noCode : "";
+      return;
     }
+    if (typeof entry.size === "number" && entry.size > MAX_SOURCE_BYTES) {
+      codeKey = null;
+      codeBox.textContent = text.codeTooLarge;
+      return;
+    }
+    const key = fileKey(entry);
+    if (codeKey === key) return;
+    codeKey = key;
+    codeBox.textContent = text.loading;
+    let source;
+    try {
+      const data = await files.read(S.design.thread_id, entry.path, {
+        signal: viewSignal(),
+        maxBytes: MAX_SOURCE_BYTES,
+      });
+      source = new TextDecoder().decode(data);
+    } catch {
+      source = null;
+    }
+    if (codeKey !== key) return;
+    if (source === null) codeKey = null;
+    codeBox.textContent = source ?? text.codeTooLarge;
+  }
+
+  function renderFiles() {
+    filesPanel.replaceChildren();
+    const loaded = S.loaded;
+    const groups = loaded
+      ? [
+          ["", loaded.top],
+          ["views/", loaded.viewFiles],
+          ["print/", loaded.printFiles],
+        ].filter(([, group]) => group.size)
+      : [];
+    if (!groups.length) {
+      filesPanel.append(element("p", "muted pad", text.noFiles));
+      return;
+    }
+    const ul = element("ul", "file-list");
+    for (const [prefix, group] of groups)
+      for (const name of [...group.keys()].sort()) {
+        const entry = group.get(name);
+        const href = fileUrl(entry, { download: true });
+        if (!href) continue;
+        const li = element("li");
+        const link = element("a", "", `${prefix}${name}`);
+        link.href = href;
+        link.download = name;
+        link.setAttribute("aria-label", text.download(`${prefix}${name}`));
+        li.append(link, element("span", "muted", bytes(entry.size)));
+        ul.append(li);
+      }
+    filesPanel.append(
+      ul.childElementCount ? ul : element("p", "muted pad", text.noFiles),
+    );
   }
 
   // -- conversation ---------------------------------------------------------------------------
@@ -1290,24 +1211,37 @@ export function mountPage(root, context) {
     });
   }
 
+  const callLabel = (name, summary) =>
+    summary ? `${name}: ${summary}` : String(name);
+
   function messageNode(role, body, calls = []) {
     const node = element("div", `msg ${role}`);
     node.append(
       element("div", "who", role === "user" ? text.you : text.assistant),
     );
     if (body) node.append(element("div", "text", body));
-    for (const name of calls) node.append(element("span", "chip", name));
+    for (const label of calls) node.append(element("span", "chip", label));
     return node;
   }
 
   function historyNode(message) {
+    if (message.role === "tool") {
+      const body = String(message.text ?? "");
+      if (!body.trim()) return null;
+      const node = element("details", "msg tool");
+      node.append(
+        element(
+          "summary",
+          "",
+          text.toolResult(String(message.tool_name ?? "")),
+        ),
+        element("pre", "", body),
+      );
+      return node;
+    }
     const calls = (
       Array.isArray(message.tool_calls) ? message.tool_calls : []
-    ).map((c) =>
-      isScadDraft(c?.name)
-        ? text.draftCall(null)
-        : text.toolCall(String(c?.name ?? "")),
-    );
+    ).map((c) => callLabel(String(c?.name ?? ""), String(c?.summary ?? "")));
     if (!message.text && !calls.length) return null;
     return messageNode(message.role, String(message.text ?? ""), calls);
   }
@@ -1319,7 +1253,9 @@ export function mountPage(root, context) {
     historyOf = S.messages;
     const shown = S.messages.filter(
       (m) =>
-        m && (m.role === "user" || m.role === "assistant") && historyNode(m),
+        m &&
+        (m.role === "user" || m.role === "assistant" || m.role === "tool") &&
+        historyNode(m),
     );
     let added = appendOnly(shownIds, shown);
     if (added === null) {
@@ -1341,12 +1277,17 @@ export function mountPage(root, context) {
       if (run.prompt) live.push(messageNode("user", run.prompt));
       for (const entry of assistantMessages(run.state))
         live.push(messageNode("assistant", entry.text));
-      for (const call of scadCalls(run.state))
-        if (call.result)
-          live.push(element("span", "chip", text.draftCall(call.result.seq)));
+      for (const item of toolCalls(run.state))
+        live.push(
+          element(
+            "span",
+            item.done ? "chip done" : "chip",
+            callLabel(item.name, item.summary),
+          ),
+        );
       live.push(element("div", "working", text.working));
     }
-    if (S.note) live.push(element("div", "working", S.note));
+    if (S.note) live.push(element("div", "working note", S.note));
     if (!historyBox.childElementCount && !live.length)
       live.push(element("p", "muted", text.noMessages));
     liveBox.replaceChildren(...live);
@@ -1367,12 +1308,12 @@ export function mountPage(root, context) {
   async function sendPrompt() {
     const value = promptBox.value.trim();
     if (!value || S.run || !S.design) return;
-    if (S.source !== S.savedSource) await saveEdits();
     S.note = null;
+    // The version on screen rides along: the model is told when it is not the newest.
+    const viewing =
+      S.selected !== null ? { viewing: S.selected, newest: newest() } : {};
     const started = await startRun(
-      "prompt",
-      { design_id: S.design.id, text: value, ...runOptions() },
-      "prompt",
+      { design_id: S.design.id, text: value, ...viewing, ...runOptions() },
       value,
     );
     if (started) promptBox.value = "";
@@ -1385,27 +1326,15 @@ export function mountPage(root, context) {
     sendButton.disabled = running || !S.design;
     stopButton.hidden = !running;
     promptBox.disabled = running;
-    held.hidden = !running;
-    editor?.setReadOnly(running);
-    runStatus.textContent = running
-      ? S.run.kind === "finalize"
-        ? text.final.running
-        : text.working
-      : "";
-    renderSaveState();
-    renderFinalizeButton();
-    for (const node of versionsList.querySelectorAll("button"))
-      node.disabled = running;
-    for (const node of paramsList.querySelectorAll("input"))
-      node.disabled = running;
+    runStatus.textContent = running ? text.working : "";
   }
 
-  async function startRun(action, payload, kind, prompt = null) {
+  async function startRun(payload, prompt) {
     if (S.run) return false;
     setNotice(designNotice, null);
     let started;
     try {
-      started = await call(action, payload);
+      started = await call("prompt", payload);
     } catch (error) {
       failNotice(designNotice, error);
       return false;
@@ -1414,14 +1343,13 @@ export function mountPage(root, context) {
       setNotice(designNotice, text.errors.action);
       return false;
     }
-    follow(started.run_id, started.thread_id, kind, prompt);
+    follow(started.run_id, started.thread_id, "prompt", prompt);
     return true;
   }
 
   function stopFollowing() {
     if (!S.run) return;
     S.run.controller.abort();
-    cancel(S.run.liveTimer);
     S.run = null;
   }
 
@@ -1437,71 +1365,73 @@ export function mountPage(root, context) {
   }
 
   async function resumeRun() {
-    const runId = S.design?.run_id;
+    const design = S.design;
+    const runId = design?.run_id;
     if (!runId || !ID.test(runId) || S.run) return;
     try {
       const { status } = await call("run_status", {
-        design_id: S.design.id,
+        design_id: design.id,
         run_id: runId,
       });
-      if (ACTIVE.has(status)) {
-        const finalizing = S.versions.some(
-          (v) => v.final?.status === "running" && v.final?.run_id === runId,
-        );
-        follow(runId, S.design.thread_id, finalizing ? "finalize" : "resume");
-      } else await reloadDesign();
+      if (S.design === design && ACTIVE.has(status))
+        follow(runId, design.thread_id, "resume");
     } catch {
       /* An unknown run is simply not followed. */
     }
   }
 
-  /** Follow a run: stream it (or poll), render drafts live, then settle the design. */
+  /** Follow a run: stream it (or poll), re-list the versions as tools answer, then settle. */
   async function follow(runId, threadId, kind, prompt = null) {
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     const run = {
       id: runId,
-      threadId,
       kind,
       prompt,
       designId: S.design.id,
       controller,
       state: createRunState(),
-      known: new Set(S.versions.map((v) => v.id)),
-      handled: new Set(),
-      pending: new Set(),
-      liveTimer: 0,
-      lastPrefix: "",
-      lastOutcome: null,
-      failedVersion: null,
+      newestBefore: newest(),
+      results: 0,
+      streamed: false,
+      stopped: false,
     };
     S.run = run;
     renderRunState();
     renderMessages();
-    let streamed = false;
     if (context.joinRunStream) {
       try {
         for await (const event of context.joinRunStream(threadId, runId, {
           signal: controller.signal,
         })) {
-          streamed = true;
+          run.streamed = true;
           foldRunEvent(run.state, event);
           progress(run);
           if (run.state.ended) break;
         }
       } catch {
         if (controller.signal.aborted) return;
-        if (streamed) setNotice(designNotice, text.errors.stream, "info");
+        if (run.streamed) setNotice(designNotice, text.errors.stream, "info");
       }
     }
     if (controller.signal.aborted) return;
-    // Also after a stream that ended: run_status is where the server settles a
-    // finalize run that never built ("running" -> "failed") and clears the design's run.
+    // Also after a stream that ended: run_status is where the server clears the design's run.
     await poll(run);
     if (controller.signal.aborted) return;
-    await settle(run);
     signal.removeEventListener("abort", abort);
+    await settle(run);
+  }
+
+  /** One folded event: redraw the turn, and list the folder again when a tool answered. */
+  function progress(run) {
+    if (S.run !== run) return;
+    scheduleMessages();
+    const answered = run.state.results.size;
+    if (answered !== run.results) {
+      run.results = answered;
+      scheduleRefresh();
+    }
   }
 
   async function poll(run) {
@@ -1520,115 +1450,27 @@ export function mountPage(root, context) {
       } catch {
         return;
       }
+      // Without a stream there is no tool result to wait for: list on each poll.
+      if (!run.streamed) scheduleRefresh(0);
       await new Promise((resolve) => later(resolve, POLL_MS));
     }
   }
 
-  /** One folded event: refresh the text, render the streaming draft, handle finished drafts. */
-  function progress(run) {
-    if (S.run !== run) return;
-    scheduleMessages();
-    const calls = scadCalls(run.state);
-    for (const call of calls)
-      if (call.result && !run.handled.has(call.result.version_id))
-        handleDraft(run, call);
-    const live = calls.findLast(
-      (call) => !call.result && !call.failed && call.code,
-    );
-    if (!live || run.liveTimer) return;
-    // At most one live pass per interval while the arguments stream in.
-    run.liveTimer = later(() => {
-      run.liveTimer = 0;
-      if (S.run !== run) return;
-      const current = scadCalls(run.state).findLast(
-        (call) => !call.result && !call.failed && call.code,
-      );
-      if (!current) return;
-      editor?.setDoc(current.code);
-      const prefix = completePrefix(current.code);
-      if (!prefix.trim() || prefix === run.lastPrefix) return;
-      run.lastPrefix = prefix;
-      show(prefix, "live", { partial: true });
-    }, LIVE_DEBOUNCE_MS);
-  }
-
-  /** The model stored a version: render the whole file, report it, make it the head. */
-  function handleDraft(run, call) {
-    const versionId = call.result.version_id;
-    run.handled.add(versionId);
-    if (run.known.has(versionId) || !ID.test(versionId)) return;
-    const task = (async () => {
-      cancel(run.liveTimer);
-      run.liveTimer = 0;
-      let scad =
-        call.complete && typeof call.code === "string" ? call.code : null;
-      if (scad === null) scad = (await fetchVersion(versionId))?.scad ?? "";
-      if (S.design?.id !== run.designId) return;
-      S.headId = versionId;
-      setSource(scad);
-      upsertVersion({
-        id: versionId,
-        seq: call.result.seq,
-        parent_id: null,
-        source: "model",
-        scad,
-        render: null,
-        created_at: new Date().toISOString(),
-      });
-      const outcome = await show(scad, "final");
-      if (outcome.engine) run.lastOutcome = "engine";
-      if (!shouldReport(null, outcome)) return;
-      await report(versionId, outcome);
-      run.lastOutcome = outcome.ok;
-      run.failedVersion = outcome.ok ? null : versionId;
-    })();
-    run.pending.add(task);
-    task.finally(() => run.pending.delete(task));
-  }
-
   async function settle(run) {
-    cancel(run.liveTimer);
-    await Promise.allSettled([...run.pending]);
     if (S.run !== run) return;
-    await reloadDesign();
-    // Drafts whose stream was missed (no joinRunStream, or a lost stream) render now.
-    for (const version of [...S.versions].sort((a, b) => a.seq - b.seq)) {
-      if (
-        run.known.has(version.id) ||
-        run.handled.has(version.id) ||
-        version.render ||
-        !isDraftSource(version.source)
-      )
-        continue;
-      run.handled.add(version.id);
-      let scad = version.scad;
-      if (scad == null) scad = (await fetchVersion(version.id))?.scad ?? "";
-      const outcome = await show(scad, "final");
-      if (outcome.engine) run.lastOutcome = "engine";
-      if (!shouldReport(null, outcome)) continue;
-      await report(version.id, outcome);
-      run.lastOutcome = outcome.ok;
-      run.failedVersion = outcome.ok ? null : version.id;
-    }
     S.run = null;
     run.controller.abort();
-    const head = headVersion();
-    if (head && head.scad != null && head.scad !== S.savedSource)
-      setSource(head.scad);
-    else {
-      // No new version (stopped, failed, or the tool refused the call): put back
-      // the head's file where the stream wrote the model's unfinished one.
-      editor?.setDoc(S.source);
-      if (S.shown?.partial) {
-        if (head && S.source.trim()) renderVersion(head, S.source);
-        else {
-          viewer?.reset();
-          S.shown = S.lastGood = null;
-          setOverlay(null);
-          renderInfo();
-        }
-      }
+    cancel(refreshTimer);
+    renderRunState();
+    settling = run;
+    try {
+      await refresh();
+    } catch {
+      // The history below is reloaded even when the last version could not be shown.
+    } finally {
+      settling = null;
     }
+    if (S.design?.id !== run.designId) return;
     if (run.state.error)
       setNotice(
         designNotice,
@@ -1636,35 +1478,10 @@ export function mountPage(root, context) {
           ? text.runEnded.error
           : String(run.state.error),
       );
-    // A turn that saved no draft leaves the preview as it was: say so, not nothing.
-    const noDraft = endedWithoutDraft(run, S.versions);
-    if (noDraft && run.kind === "prompt") S.note = text.noDraft;
+    // A turn that made no version leaves the preview as it was: say so, not nothing.
+    if (endedWithoutVersion(run, newest())) S.note = text.noNewVersion;
     await loadMessages();
-    renderAll();
-    renderParams();
-    // One automatic repair turn for a draft that did not render, never more.
-    if (shouldRepair(run)) {
-      S.note = text.repairing;
-      renderMessages();
-      const started = await startRun(
-        "repair",
-        {
-          design_id: run.designId,
-          version_id: run.failedVersion,
-          ...runOptions(),
-        },
-        "repair",
-      );
-      if (!started) S.note = null;
-    } else if (run.kind === "repair") {
-      // An engine failure is not the repair's verdict; the preview says what failed.
-      S.note = noDraft
-        ? text.noDraft
-        : run.lastOutcome === true || run.lastOutcome === "engine"
-          ? null
-          : text.repairSpent;
-      renderMessages();
-    }
+    renderMessages();
   }
 
   // -- start --------------------------------------------------------------------------------------
@@ -1673,13 +1490,17 @@ export function mountPage(root, context) {
 
   return function dispose() {
     stopFollowing();
+    view?.abort();
     for (const id of timers) clearTimeout(id);
     timers.clear();
     if (messagesFrame) cancelAnimationFrame(messagesFrame);
     widthObserver.disconnect();
-    runner?.dispose();
     viewer?.dispose();
-    editor?.dispose();
+    viewer = null;
+    controls?.dispose();
+    controls = null;
+    models.clear();
+    reads.clear();
     root.replaceChildren();
   };
 }

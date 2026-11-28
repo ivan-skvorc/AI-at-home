@@ -184,9 +184,9 @@ instead of requiring ad hoc bash/Python checks, and makes insufficient evidence 
 Execution completion status and automatic retry policy are unchanged.
 
 To accept a deliverable that a plugin tool judges itself, such as a part that
-`cad_build` answers `passed` for, set a criterion to
+a build tool answers `passed` for, set a criterion to
 `tool_result:<namespace>/<tool> <field>=<JSON scalar> [where <arg>=<JSON scalar>]`,
-for example `tool_result:cad/cad_build passed=true where name="bracket-a"`. It
+for example `tool_result:parts/build_part passed=true where name="bracket-a"`. It
 is read from the tool's own recorded answer, because a file the subagent could
 write, such as a report named like the tool's, is not evidence. Write the tool
 as `namespace/tool`, not as the hashed name the model calls. Values are `true`,
@@ -203,8 +203,7 @@ expected or `where` string is longer than 120 characters. Only the newest 20
 calls of the named tools are kept, and the leaf needs no sandbox. It proves
 what the tool answered for the arguments the subagent chose: any argument
 other than the `where` one, such as the expected numbers a build was judged
-against, is not checked, so the CAD recipe has the lead confirm them
-([delegation reference](../../skills/public/cad-modeling/references/delegation.md)).
+against, is not checked, so the delegating lead confirms them itself.
 Reference depth:
 [`ACCEPTANCE_CHECKS.md`](../../backend/packages/harness/deerflow/subagents/ACCEPTANCE_CHECKS.md).
 

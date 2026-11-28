@@ -1,4 +1,2 @@
 # Keep generated bundles byte-for-byte, including embedded template strings.
 deerflow_extension_cad_design/static/dist/** -whitespace linguist-generated=true
-# The OpenSCAD WebAssembly assets are gzip bytes.
-deerflow_extension_cad_design/static/dist/**/*.wasm binary

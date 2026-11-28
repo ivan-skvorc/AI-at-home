@@ -98,20 +98,6 @@ ENV PYTHONIOENCODING=utf-8
 # source distributions in development containers.
 FROM builder AS dev
 
-# Fork: the bundled CAD module (FORK.md §51) is on in the dev container too, and
-# its kernel loads libX11 and the three OpenGL dispatch libraries, none of which
-# this stage has. The runtime stage below gets libX11 with libgtk-3-0 and unpacks
-# the dispatch libraries the same way; see there for why they are not installed.
-# A failure only warns: `cad_build` then says the kernel cannot be loaded.
-RUN (apt-get update \
-     && apt-get install -y --no-install-recommends libx11-6 \
-     && cd /tmp \
-     && apt-get download libglvnd0 libglx0 libgl1 \
-     && for deb in libglvnd0_*.deb libglx0_*.deb libgl1_*.deb; do dpkg-deb -x "$deb" / || exit 1; done \
-     && ldconfig) \
-    || echo "WARNING: the CAD kernel's system libraries were not installed; cad_build cannot load its kernel in this dev image" >&2; \
-    rm -f /tmp/*.deb; rm -rf /var/lib/apt/lists/*
-
 # Install Docker CLI (for DooD: allows starting sandbox containers via host Docker socket)
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
@@ -166,30 +152,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-xcb1 \
     libxtst6 \
     && rm -rf /var/lib/apt/lists/*
-
-# The CAD module's kernel (examples/deerflow-extension-cad, FORK.md §51) links
-# libGL.so.1, libGLX.so.0 and libGLdispatch.so.0 and never renders with them.
-# `apt-get install libgl1` would satisfy that and pull Mesa and LLVM in behind
-# libglx0: well over a hundred megabytes the kernel never loads. So the three
-# dispatch packages are unpacked without their dependencies, about 1.5 MB.
-# libX11, the kernel's other system library, came in with libgtk-3-0 above.
-# Optional on purpose: a failure here must not stop the image everything else
-# runs in. `cad_build` and `make doctor` name the missing library instead.
-# `&&` throughout: `set -e` does not apply on the left of `||`.
-RUN (cd /tmp \
-     && apt-get update \
-     && apt-get download libglvnd0 libglx0 libgl1 \
-     && for deb in libglvnd0_*.deb libglx0_*.deb libgl1_*.deb; do dpkg-deb -x "$deb" / || exit 1; done \
-     && ldconfig) \
-    || echo "WARNING: the OpenGL dispatch libraries were not unpacked; the CAD module cannot load its kernel in this image" >&2; \
-    rm -f /tmp/*.deb; rm -rf /var/lib/apt/lists/*
-
-# Fork: build the bundled CAD module's test cube once. It proves at build time
-# that the kernel loads in this image (the warning below is the place to look
-# when it does not), and it leaves the kernel's compiled modules in the image,
-# which a new container, or one that may not write them, would otherwise redo.
-RUN cd backend && (uv run --no-sync python -m deerflow_extension_cad.selftest \
-    || echo "WARNING: the CAD module's self-test did not pass in this image; make doctor names the cause" >&2)
 
 # Camoufox browser binaries baked in the builder (an empty dir when the camoufox
 # extra was not selected). INSTALL_DIR = /root/.cache/camoufox at runtime (root),

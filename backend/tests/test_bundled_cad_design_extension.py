@@ -7,7 +7,8 @@ Three places must agree, and none of them drifts loudly on its own:
 - ``backend/extensions/sources/deerflow-extension-cad-design`` is the managed
   snapshot uv installs from (the Docker build context excludes ``examples/``);
 - ``config.example.yaml``'s ``plugins:`` record turns it on, and migration 78
-  of ``scripts/config_upgrade.py`` hands that record to an existing install.
+  of ``scripts/config_upgrade.py`` hands that record to an existing install
+  (migration 79 later drops its retired ``max_source_bytes`` key).
 
 The page's ``ui/`` imports cad-preview's ``ui/`` by relative path, so the
 snapshot must sit beside the cad-preview snapshot as the examples do.
@@ -27,15 +28,14 @@ from packaging.requirements import Requirement
 
 from deerflow.extensions.loader import ExtensionSpec, load_extensions
 from deerflow.extensions.manager import _SNAPSHOT_IGNORES, _validate_locked_local_sources
-from deerflow.extensions.plugin_tools import plugin_tool_name
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend"
 EXAMPLE = REPO_ROOT / "examples" / "deerflow-extension-cad-design"
 SNAPSHOT = BACKEND / "extensions" / "sources" / "deerflow-extension-cad-design"
 _LOCAL_CACHES = (".ruff_cache", ".pytest_cache")
-# The example's build tools (three, CodeMirror, esbuild, the OpenSCAD npm package).
-# The bundle they build ships in static/dist; the tools never reach the snapshot.
+# The example's build tools (three, esbuild). The bundle they build
+# ships in static/dist; the tools never reach the snapshot.
 _BUILD_TOOLS = ("node_modules",)
 RECORD = {
     "name": "cad-design",
@@ -43,7 +43,7 @@ RECORD = {
     "use": "deerflow_extension_cad_design:install",
     "enabled": True,
     "required": False,
-    "config": {"enabled": True, "storage_path": "cad-design/designs.sqlite", "max_source_bytes": 65536},
+    "config": {"enabled": True, "storage_path": "cad-design/designs.sqlite"},
 }
 BASE = "sandbox:\n  use: custom\nmodels: []\n"
 
@@ -81,9 +81,8 @@ def test_the_installed_snapshot_matches_the_example_source():
     assert snapshot.keys() == example.keys(), hint
     stale = sorted(name for name in example if example[name] != snapshot[name])
     assert not stale, f"{hint}; stale: {stale}"
-    # The browser bundle and the OpenSCAD build are built, not installed: the snapshot carries them.
+    # The browser bundle is built, not installed: the snapshot carries it.
     assert "deerflow_extension_cad_design/static/dist/index.mjs" in snapshot
-    assert "deerflow_extension_cad_design/static/dist/chunks/scad-worker.mjs" in snapshot
     # The relative imports of cad-preview's viewer modules resolve inside the snapshot tree.
     assert (SNAPSHOT.parent / "deerflow-extension-cad-preview" / "ui" / "mesh.js").is_file()
 
@@ -105,7 +104,7 @@ def test_a_pull_that_changes_only_the_bundle_rebuilds_the_installed_copy():
     assert project["tool"]["uv"]["cache-keys"] == [{"file": "pyproject.toml"}, {"file": "deerflow_extension_cad_design/**/*"}]
 
 
-def test_the_shipped_record_loads_with_its_page_tool_middleware_and_route(tmp_path, monkeypatch):
+def test_the_shipped_record_loads_with_its_page_middleware_and_sandbox_service(tmp_path, monkeypatch):
     monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
     (record,) = [entry for entry in _shipped_example()["plugins"] if entry["name"] == "cad-design"]
     assert record == RECORD
@@ -116,22 +115,60 @@ def test_the_shipped_record_loads_with_its_page_tool_middleware_and_route(tmp_pa
     ((_, contribution),) = loaded.plugins
     assert (contribution.namespace, contribution.enabled) == ("cad-design", True)
     assert contribution.frontend.module == "cad-design"
-    assert [tool.name for tool in contribution.tools] == ["scad_draft"]
-    assert plugin_tool_name("cad-design", "scad_draft").startswith("ext_cad_design_")
-    assert {"list_designs", "prompt", "finalize"} <= {action.name for action in contribution.backend}
-    # The middleware keeps scad_draft out of every model call that is not a design run.
+    # The model works with the container's bash and the page reads through the host:
+    # no plugin tool and no contributed route, so the Gateway serves no design file.
+    assert contribution.tools == ()
+    assert not loaded.routers
+    actions = {action.name for action in contribution.backend}
+    assert {"list_designs", "get_design", "prompt", "messages", "run_status"} <= actions
+    assert not {"save_version", "report_render", "repair", "finalize"} & actions
     assert len(loaded.middleware_contributors) == 1
-    ((_, router),) = loaded.routers
-    assert [route.path for route in router.routes] == ["/api/extensions/cad-design/designs/{design_id}/files/{name}"]
+    # The service that reads HostPolicySnapshot.sandbox_container when the Gateway starts.
+    assert len(loaded.services) == 1
     # The design store is created on first use, not at startup.
     assert not (tmp_path / "cad-design").exists()
 
 
-def test_delegated_subagents_get_the_filter_that_removes_scad_draft(tmp_path, monkeypatch):
-    """The host binds plugin tools into subagents too, so the subagent stack must carry the filter."""
-    from langchain.agents.middleware.types import ModelRequest
-    from langchain_core.messages import AIMessage, HumanMessage
+def test_a_record_from_before_migration_79_still_loads(tmp_path, monkeypatch):
+    """An install that has not upgraded its config yet still carries max_source_bytes."""
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
+    old = {**RECORD, "config": {**RECORD["config"], "max_source_bytes": 65536}}
 
+    loaded, diagnostics = load_extensions([ExtensionSpec(**old)])
+
+    assert not diagnostics, diagnostics
+    assert len(loaded.plugins) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_sandbox_service_reads_the_host_mode_the_gateway_projects(tmp_path, monkeypatch):
+    """start_services hands the service project_host_policy(app_config); get_design reports it as container."""
+    from types import SimpleNamespace
+
+    from deerflow.config.app_config import AppConfig
+    from deerflow.config.sandbox_config import SandboxConfig
+    from deerflow.extensions.gateway import start_services
+
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
+
+    class Runs:
+        async def create_thread(self, **kwargs):
+            return "thread-1"
+
+    context = SimpleNamespace(principal=SimpleNamespace(user_id="alice"), settings={}, agent_runs=Runs(), interaction="session")
+    for use, container in (("deerflow.community.aio_sandbox:AioSandboxProvider", True), ("deerflow.sandbox.local:LocalSandboxProvider", False)):
+        loaded, _ = load_extensions([ExtensionSpec(**RECORD)])
+        ((_, contribution),) = loaded.plugins
+        get_design = next(action.handler for action in contribution.backend if action.name == "get_design")
+        create_design = next(action.handler for action in contribution.backend if action.name == "create_design")
+        assert not await start_services(loaded, AppConfig(sandbox=SandboxConfig(use=use)), None)
+        design = (await create_design({"title": "Plate"}, context))["design"]
+        answer = await get_design({"design_id": design["id"]}, context)
+        assert (answer["folder"], answer["container"]) == ("/mnt/user-data/outputs/design", container), use
+
+
+def test_the_brief_middleware_rides_the_lead_stack_only(tmp_path, monkeypatch):
+    """The brief is the lead's; the subagent stack carries nothing of this extension."""
     from deerflow.agents.lead_agent.agent import build_middlewares
     from deerflow.agents.middlewares.tool_error_handling_middleware import build_subagent_runtime_middlewares
     from deerflow.config.app_config import AppConfig
@@ -143,21 +180,14 @@ def test_delegated_subagents_get_the_filter_that_removes_scad_draft(tmp_path, mo
     assert not diagnostics, diagnostics
     app_config = AppConfig(sandbox=SandboxConfig(use="deerflow.sandbox.local:LocalSandboxProvider"))
 
-    def names(stack):
-        return {type(m.inner if isinstance(m, IsolatedMiddleware) else m).__name__ for m in stack}
+    def ours(stack):
+        unwrapped = (m.inner if isinstance(m, IsolatedMiddleware) else m for m in stack)
+        return [type(m).__name__ for m in unwrapped if type(m).__module__.startswith("deerflow_extension_cad_design")]
 
-    subagent = build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded)
-    assert "NoDrafting" in names(subagent)
-    lead = names(build_middlewares(config={"configurable": {}}, model_name="gpt-4o", app_config=app_config, extensions=loaded))
-    assert "DesignMode" in lead and "NoDrafting" not in lead
-
-    # What the wrapper the host put around it hands on, not what the filter returns.
-    (wrapped,) = [m for m in subagent if isinstance(m, IsolatedMiddleware) and type(m.inner).__name__ == "NoDrafting"]
-    scad_draft, other = {"name": plugin_tool_name("cad-design", "scad_draft")}, {"name": "bash"}
-    request = ModelRequest(model=None, messages=[HumanMessage("hi")], system_message=None, tools=[scad_draft, other], state={}, runtime=None)
-    passed = []
-    wrapped.wrap_model_call(request, lambda sent: passed.append(sent) or AIMessage("ok"))
-    assert passed[0].tools == [other]
+    subagent = ours(build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded))
+    lead = ours(build_middlewares(config={"configurable": {}}, model_name="gpt-4o", app_config=app_config, extensions=loaded))
+    assert lead == ["DesignMode"]
+    assert subagent == []
 
 
 def test_the_migration_delivers_the_shipped_record():

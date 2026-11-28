@@ -50,9 +50,9 @@ INTERNET_ENABLED_CONTEXT_KEY = "internet_enabled"
 # it as a network workaround.
 #
 # ``LOCAL_EXTENSION_TOOL_GROUP`` is the name an extension's model tool declares
-# when it works on this machine only (the CAD module, FORK.md §51). The plugin
-# default ``extensions`` is deliberately absent, and ``media`` is not reused:
-# that one means the local ComfyUI service.
+# when it works on this machine only (FORK.md §27). The plugin default
+# ``extensions`` is deliberately absent, and ``media`` is not reused: that one
+# means the local ComfyUI service.
 LOCAL_EXTENSION_TOOL_GROUP = "local_extensions"
 
 OFFLINE_ALLOWED_TOOL_GROUPS: frozenset[str] = frozenset(

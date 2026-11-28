@@ -6,9 +6,12 @@ import {
   conversationText,
   joinRunStream,
   latestVisibleAnswer,
+  listThreadOutputs,
   openConversation,
   pluginModelSnapshot,
+  readThreadOutput,
   requestExtensionRoute,
+  threadOutputURL,
 } from "@/core/extensions/services";
 import type { AgentThread } from "@/core/threads/types";
 
@@ -19,6 +22,7 @@ const { request, getState, getThread } = rs.hoisted(() => ({
 }));
 rs.mock("@/core/api/fetcher", () => ({ fetch: request }));
 rs.mock("@/core/config", () => ({ getBackendBaseURL: () => "" }));
+rs.mock("@/core/static-mode", () => ({ isStaticWebsiteOnly: () => false }));
 rs.mock("@/core/api", () => ({
   getAPIClient: () => ({ threads: { getState, get: getThread } }),
 }));
@@ -333,4 +337,133 @@ test("plugin model snapshots copy names and prefer the user's model", () => {
   });
   expect(pluginModelSnapshot(models, "gone").defaultName).toBe("fast");
   expect(pluginModelSnapshot([], "gone")).toEqual({ list: [] });
+});
+
+const OUT = "/mnt/user-data/outputs/design";
+
+test("thread files list an outputs folder through the owner-checked listing route", async () => {
+  request.mockResolvedValue(
+    Response.json({
+      path: OUT,
+      exists: true,
+      entries: [
+        {
+          name: "v1",
+          path: `${OUT}/v1`,
+          kind: "directory",
+          size: null,
+          modified_at: "2026-11-25T10:00:00Z",
+        },
+        // Not the listed folder plus its name: dropped by the host's parser.
+        {
+          name: "evil",
+          path: "/mnt/user-data/uploads/evil",
+          kind: "file",
+          size: 1,
+          modified_at: null,
+        },
+      ],
+      truncated: false,
+      total: 2,
+    }),
+  );
+  const signal = new AbortController().signal;
+  expect(await listThreadOutputs("thread-1", OUT, signal)).toEqual([
+    {
+      name: "v1",
+      path: `${OUT}/v1`,
+      kind: "directory",
+      size: null,
+      modified_at: "2026-11-25T10:00:00Z",
+    },
+  ]);
+  const [url, init] = request.mock.calls[0]!;
+  expect(url).toBe(
+    `/api/threads/thread-1/files?path=${encodeURIComponent(OUT)}`,
+  );
+  expect(init.signal).toBe(signal);
+  request.mockResolvedValue(
+    Response.json({ detail: "Directory not found" }, { status: 404 }),
+  );
+  await expect(
+    listThreadOutputs("thread-1", `${OUT}/v9`, signal),
+  ).rejects.toMatchObject({ status: 404 });
+});
+
+test("thread files accept only paths under the outputs folder and a plain thread id", async () => {
+  const signal = new AbortController().signal;
+  for (const [threadId, path] of [
+    ["../auth", OUT],
+    ["thread?x=1", OUT],
+    ["thread", "/mnt/user-data/uploads/a.stl"],
+    ["thread", "/mnt/user-data/workspace/design/model.scad"],
+    ["thread", "/mnt/user-data/outputs-evil/a"],
+    ["thread", `${OUT}/../../uploads/a`],
+    ["thread", `${OUT}/./v1`],
+    ["thread", `${OUT}//v1`],
+    ["thread", `${OUT}/v1/`],
+    ["thread", `${OUT}\\v1`],
+    ["thread", `${OUT}/v1\u0000`],
+    ["thread", "mnt/user-data/outputs/a"],
+  ] as const) {
+    await expect(listThreadOutputs(threadId, path, signal)).rejects.toThrow();
+    await expect(readThreadOutput(threadId, path, signal)).rejects.toThrow();
+    expect(() => threadOutputURL(threadId, path)).toThrow();
+  }
+  expect(request).not.toHaveBeenCalled();
+  await expect(
+    listThreadOutputs("thread", OUT, AbortSignal.abort()),
+  ).rejects.toThrow();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test("thread file URLs encode each path segment for the artifact route", () => {
+  expect(threadOutputURL("t-1", `${OUT}/v1/a b#%.stl`)).toBe(
+    "/api/threads/t-1/artifacts/mnt/user-data/outputs/design/v1/a%20b%23%25.stl",
+  );
+  expect(threadOutputURL("t-1", `${OUT}/v1/a.step`, true)).toBe(
+    "/api/threads/t-1/artifacts/mnt/user-data/outputs/design/v1/a.step?download=true",
+  );
+});
+
+test("thread file reads are bounded even when Content-Length is missing", async () => {
+  const encoder = new TextEncoder();
+  const body = (chunks: string[]) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+  request.mockResolvedValue(new Response(body(['{"a":', "1}"])));
+  const signal = new AbortController().signal;
+  const bytes = await readThreadOutput(
+    "t",
+    `${OUT}/v1/report.json`,
+    signal,
+    64,
+  );
+  expect(new TextDecoder().decode(bytes)).toBe('{"a":1}');
+  const [url, init] = request.mock.calls[0]!;
+  expect(url).toBe(
+    "/api/threads/t/artifacts/mnt/user-data/outputs/design/v1/report.json",
+  );
+  expect(init).toMatchObject({ cache: "no-store", redirect: "error", signal });
+
+  request.mockResolvedValue(
+    new Response(body(["x".repeat(40), "y".repeat(40)])),
+  );
+  await expect(
+    readThreadOutput("t", `${OUT}/v1/report.json`, signal, 64),
+  ).rejects.toMatchObject({ status: 413 });
+  request.mockResolvedValue(
+    new Response("x".repeat(10), { headers: { "Content-Length": "100" } }),
+  );
+  await expect(
+    readThreadOutput("t", `${OUT}/v1/report.json`, signal, 64),
+  ).rejects.toMatchObject({ status: 413 });
+  request.mockResolvedValue(new Response("gone", { status: 404 }));
+  await expect(
+    readThreadOutput("t", `${OUT}/v1/report.json`, signal),
+  ).rejects.toMatchObject({ status: 404 });
 });

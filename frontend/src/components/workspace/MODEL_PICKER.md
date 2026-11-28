@@ -5,8 +5,9 @@ Moved out of `frontend/AGENTS.md` to keep that file under its guidance budget
 
 Selecting a model is
 `components/workspace/model-select.tsx` (`ModelSelect`) — or, inside the
-composer and sidecar, the `ModelPickerControls` + `ModelPickerList` pair it is
-built from (`components/workspace/model-picker-controls.tsx`). Do **not** map
+composer (`composer-run-controls.tsx`, also mounted on plugin pages) and the
+sidecar, the `ModelPickerControls` + `ModelPickerList` pair it is built from
+(`components/workspace/model-picker-controls.tsx`). Do **not** map
 `models` into `SelectItem`s: that is the state this feature existed to end, and
 it is silent when reintroduced — a flat list in `config.yaml` order with a grey
 price is not an error, it just makes a model impossible to find on that one
@@ -27,7 +28,8 @@ Moved here from `frontend/src/AGENTS.md`, whose pointer is the entry point.
 
 Both render `ModelSelector` (`components/ai-elements/model-selector.tsx`) around
 `ModelPickerControls` + `ModelPickerList` + `ModelPickerRow`
-(`components/workspace/model-picker-controls.tsx`) — the search field, the
+(`components/workspace/model-picker-controls.tsx`); the composer's copy is
+`ComposerModelPicker` in `composer-run-controls.tsx` — the search field, the
 sort/group controls and the price column described above. Upstream replaced
 that pair with a favorites-based `model-picker-content.tsx` and deleted
 `ai-elements/model-selector.tsx`; this fork keeps its own picker and keeps
@@ -35,7 +37,7 @@ that file alive, because the fork's picker is the richer of the two and is
 what FORK.md pins. `model-picker-content.tsx` is carried unchanged from
 upstream and is **not** wired into the composer or Side Chat here — the
 favorites feature it adds is not integrated yet. Do not "fix" the imports in
-`input-box.tsx` or `sidecar-panel.tsx` to point at it: that silently trades
+`composer-run-controls.tsx` or `sidecar-panel.tsx` to point at it: that silently trades
 search, sorting, grouping and prices for favorites. For the same reason, the
 model-picker bullet in `frontend/docs/conversation-ui-ownership.md` describes
 upstream's picker, which this fork does not wire.
@@ -53,6 +55,21 @@ again, or, better, integrate favorites into `ModelPickerList`/`ModelPickerRow`
 (the store landed intact: `core/models/favorites-store.ts`,
 `favorites.ts`, `use-model-favorites.ts`) and write the spec against this
 fork's DOM.
+
+## Plugin pages use the composer's controls
+
+A plugin page that lets the user choose a model (the Designs page) mounts
+`SurfaceContext.composerControls` instead of drawing a list: the host renders
+the composer's own mode menu, reasoning-effort menu and model pickers from
+`composer-run-controls.tsx` (`ComposerModeMenu`, `ComposerReasoningEffortMenu`,
+`ComposerModelPicker`, `ComposerSubagentModelPicker`) inside the plugin's
+element, through `plugin-composer-controls.tsx`. `InputBox` renders the same
+four components, so a change to a row, a mode or a capability rule reaches the
+chat and every plugin page at once. A plugin `<select>` of `context.models` is
+the flat list again on that one page, with no mode or effort. Pinned by
+`model-picker-sites.test.ts`, `model-selector-overflow.test.ts` and
+`plugin-composer-controls.dom.test.tsx`; the hook's contract is in
+[full-stack plugins](../../../../docs/full-stack-plugins.md).
 
 ## Model price
 

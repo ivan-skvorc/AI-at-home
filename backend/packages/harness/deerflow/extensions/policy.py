@@ -12,6 +12,23 @@ from typing import Any
 from deerflow_extension_api import HostPolicySnapshot
 
 _UNSET = object()
+_AIO_PROVIDER = "AioSandboxProvider"
+
+
+def _sandbox_container(app_config: Any) -> bool:
+    """Whether runs execute in per-thread containers over host-backed thread data.
+
+    That is the AIO provider in local container mode: the provider picks a
+    provisioner when ``provisioner_url`` is set and one shared external container
+    when ``base_url`` is, and neither mounts the thread's host directories
+    (the same rule as ``folder_ledger.mounts.mounts_effective``).
+    """
+    sandbox = getattr(app_config, "sandbox", None)
+    use = str(getattr(sandbox, "use", "") or "")
+    provider = use.rsplit(":", 1)[-1].rsplit(".", 1)[-1]
+    if provider != _AIO_PROVIDER:
+        return False
+    return not getattr(sandbox, "base_url", None) and not getattr(sandbox, "provisioner_url", None)
 
 
 def project_host_policy(
@@ -20,7 +37,7 @@ def project_host_policy(
     token_budget_config: Any | None = None,
     max_subagents_per_run: int | None | object = _UNSET,
 ) -> HostPolicySnapshot:
-    """Project the host's enforced limits into the public extension contract."""
+    """Project the host's enforced limits and its sandbox mode into the public extension contract."""
     token_budget = token_budget_config if token_budget_config is not None else getattr(app_config, "token_budget", None)
     token_budget_enabled = bool(getattr(token_budget, "enabled", False))
     if max_subagents_per_run is _UNSET:
@@ -36,4 +53,5 @@ def project_host_policy(
         budget_warn_fraction=getattr(token_budget, "warn_threshold", None) if token_budget_enabled else None,
         budget_hard_fraction=getattr(token_budget, "hard_stop_threshold", None) if token_budget_enabled else None,
         max_subagents_per_run=effective_max_subagents if isinstance(effective_max_subagents, int) else None,
+        sandbox_container=_sandbox_container(app_config),
     )

@@ -67,7 +67,8 @@ the existing positional rollback and source attribution.
   ordinary host tool assembly, including group filtering and later authorization.
   A tool that works on this machine only declares `group="local_extensions"`, the
   group classified as safe with the internet switch off (the switch does not yet
-  filter plugin tools at all, FORK.md §51); `media` means the local ComfyUI
+  filter plugin tools at all; see the generic `local_extensions` group in FORK.md
+  §27); `media` means the local ComfyUI
   service and is not reused. A custom agent with a tool-group list offers a plugin tool only
   when the list names its group.
 - `SettingsField` describes a non-secret deployment value. There is no online override
@@ -250,12 +251,61 @@ signal) ends the stream and rejects the iterator; a failed response rejects with
 status, and an event over 16 MiB stops the stream. It does not resume after a dropped
 connection; poll the run's status through a backend action and join again.
 
+The optional `threadFiles` helper reads what a thread's runs wrote under
+`/mnt/user-data/outputs/`, for example the files a run renders in its sandbox
+container. `list(threadId, virtualPath, { signal? })` returns one folder's entries
+`{ name, path, kind, size, modified_at }`, directories first, with links reported as
+`"symlink"` and never followed; it uses the host's `GET /api/threads/{threadId}/files`
+route. `read(threadId, virtualPath, { signal?, maxBytes? })` returns the file's bytes
+as an `ArrayBuffer` through `GET /api/threads/{threadId}/artifacts/<path>`, at most
+`maxBytes` (default and ceiling 25 MiB) even when the response has no length.
+`url(threadId, virtualPath, { download? })` returns that artifact URL for a link or an
+`<img>`, each path segment encoded. Both routes are owner-checked by the Gateway and
+work while a run is active. The thread identifier must match `^[A-Za-z0-9_-]{1,128}$`
+and the path must be `/mnt/user-data/outputs` or below it, without `.`, `..` or empty
+segments, backslashes or control characters; anything else is refused before a request is made, so the helper never asks for uploads, the workspace or another route. It guards the helper, not the data: both routes confine a path to the thread's `/mnt/user-data` and follow links, so a link a run left under `outputs/` is listed and read as its target, and page code runs with the user's session like any administrator-installed package. A
+failed request rejects with an `Error` whose `status` is the HTTP status (404 for a
+folder or file that does not exist yet, 413 over `maxBytes`). The page signal (and the
+optional caller signal) aborts pending reads. Everything in an outputs folder may be
+model-written: parse it as untrusted input and render text with `textContent`. Older
+hosts omit `threadFiles`.
+
 The optional `models` context value is the host's current model list,
 `{ list: [{ name, display_name? }], defaultName? }`, where `defaultName` is the
 user's current chat model when it is still available, otherwise the first model. It
 carries names only (no prices or credentials), reads live without remounting the
 page, and is empty while the host is still loading the list. A plugin that starts a
 run passes the chosen name as `model_name`; the Gateway still enforces model access.
+
+The optional `composerControls` helper puts the chat composer's run controls on a
+page, so a plugin never draws its own model list. `mount(element, { storageKey?,
+onChange? })` renders, inside the plugin's element, the same React controls the
+main chat uses: the model picker (search, sorting, grouping, prices and local model
+details, sharing the user's picker preference), the mode menu with every mode the
+composer offers for the selected model and the installed extensions, and the
+reasoning-effort menu, with the same hover guides. Democracy is not offered: the
+composer's menu does not offer it either, because a panel needs the roster and the
+cost preview of its own setup dialog. The controls live in a shadow root of their own
+holding the host's stylesheets, so page and host styles do not mix; menus and dialogs
+open over the page. It returns `{ runContext(), dispose() }`. `runContext()` returns
+a fresh object with what the chat would send for the current selection: `model_name`
+(absent while no model is known, so the server default applies), `mode`,
+`thinking_enabled`, `is_plan_mode`, `subagent_enabled`, `reasoning_effort`,
+`subagent_model_name` on a run that delegates, and for Plus and Double Plus Ultracode
+the Script workflows extension's `plugin_options` entry with the user's Settings
+limits. Pass it as the run's context from a backend action, after checking its keys:
+it is browser input like any payload. The selection persists per account, plugin page
+and `storageKey` (1-64 of `A-Za-z0-9._-`, default `default`) in this browser, never as
+an account preference; a model that is no longer configured falls back as it does in
+the chat. `onChange(runContext)` runs each time the selection changes; an exception
+it throws stays in the page. `dispose()` unmounts the controls and removes their
+element, and the page's unmount disposes any still mounted. Older hosts omit
+`composerControls`: show no model choice and let the server default apply.
+
+Since extension API 0.2.15, `HostPolicySnapshot.sandbox_container` (on
+`ExtensionRuntimeDeps.policy` and `AgentBuildContext.policy`) is true when the host
+runs per-thread AIO containers, the only mode in which a run's shell writes into the
+thread's own host-backed outputs.
 
 A thread whose metadata has `deerflow_listed: false` is left out of the chat lists
 in the sidebar and the chats page, like Side Chat threads, because an extension page
@@ -612,6 +662,16 @@ Plugin page `openConversation(threadId)` resolves authenticated thread metadata
 with `pathOfThread`; do not let plugins hardcode default-agent routes. The page's
 abort signal fences late navigation after unmount/account changes. Synchronous
 conversation-action callbacks reject Promise returns while consuming rejections.
+
+`composerControls` renders `components/workspace/composer-run-controls.tsx`, the
+components `InputBox` renders, through a portal from the page's own React tree
+(`plugin-composer-controls.tsx`), so the controls keep the workspace providers and
+unmount with the page. A plugin never receives a host component or React. The
+selection is a per-thread settings scope `plugin:<account>:<namespace>/<page>/<key>`,
+written like a conversation's own choice and repaired like it; `core/extensions/
+composer-controls.ts` derives `runContext()` with `deriveModeContext`, the derivation
+the chat's `buildRunContext` uses. Tests: `composer-controls.test.ts`,
+`surfaces.dom.test.ts`, `plugin-composer-controls.dom.test.tsx`.
 
 ## Validation scope
 

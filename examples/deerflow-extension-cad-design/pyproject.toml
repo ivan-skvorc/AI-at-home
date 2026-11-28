@@ -1,26 +1,20 @@
 [project]
 name = "deerflow-extension-cad-design"
 version = "0.1.0"
-description = "A design page for DeerFlow: OpenSCAD drafts rendered in the browser, versions, and a CadQuery finalize step"
+description = "A design page for DeerFlow: a CAD conversation beside its rendered versions, with bodies in 3D, views, checks and files"
 readme = "README.md"
 requires-python = ">=3.12"
-# The browser bundle ships the OpenSCAD WebAssembly build (GPL-2.0-or-later), so the package is GPL too.
-license = "GPL-2.0-or-later"
+license = "MIT"
 license-files = ["THIRD_PARTY_NOTICES.md"]
 dependencies = [
-    "deerflow-extension-api>=0.2.14,<0.3",
-    # The contributed file route (router.py). The Gateway already has it.
-    "fastapi>=0.115.0,<1",
-    # The design-mode middleware (middleware.py). The Gateway already has both.
+    "deerflow-extension-api>=0.2.15,<0.3",
+    # The design-brief middleware (middleware.py). The Gateway already has both.
     "langchain>=1.3,<2",
     "langchain-core>=1.2,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.28,<1",
-    # test_middleware.py builds the Command a tool returns.
-    "langgraph>=1.2.9,<1.3",
     "pytest>=9,<10",
     "pytest-asyncio>=1,<2",
     "ruff>=0.14,<1",

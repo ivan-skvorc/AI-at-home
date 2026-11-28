@@ -102,10 +102,5 @@ def test_serve_config_presence_reaches_dependency_sync(tmp_path: Path, mode: str
     else:
         assert "No DeerFlow config file found" not in result.stdout, result.stdout + result.stderr
         assert marker.read_text(encoding="utf-8") == "upgraded"
-        # Fork: a failed sync is retried once without the bundled CAD kernel's group (FORK.md §51),
-        # so a host the kernel has no wheels for still installs everything else. The stub fails both
-        # calls and keeps the arguments of the last one, which is that retry: same extras, one group less.
-        assert "retrying without the CAD kernel" in result.stdout
-        assert uv_args.read_text(encoding="utf-8").splitlines() == ["sync", "--locked", "--quiet", "--all-packages", "--no-group", "cad", *expected_extras]
+        assert uv_args.read_text(encoding="utf-8").splitlines() == ["sync", "--locked", "--quiet", "--all-packages", *expected_extras]
         assert "Backend dependency install failed" in result.stdout
-        assert "Installed without the CAD module" not in result.stdout
