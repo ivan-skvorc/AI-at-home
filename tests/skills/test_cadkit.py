@@ -328,7 +328,7 @@ def test_render_writes_each_body_and_the_preview_into_a_new_version(tmp_path, ca
     # The preview: one node per body, in metres, Y up.
     scene = trimesh.load(version / "assembly.glb")
     assert set(scene.graph.nodes_geometry) == {"a", "b"}
-    assert scene.bounds == pytest.approx([[0, 0, -0.02], [0.0205, 0.03, 0]], abs=1e-6)
+    assert scene.bounds.flatten().tolist() == pytest.approx([0, 0, -0.02, 0.0205, 0.03, 0], abs=1e-6)
     # The next render is the next version; v1 stays as it was.
     _, code, out, _ = render(capsys, tmp_path, TWO_BOXES)
     assert code == 0 and out.startswith("v2: 2/2 bodies rendered") and (design / "v2" / "a.stl").is_file()
@@ -422,6 +422,28 @@ def test_print_flags_a_one_sided_ledge_and_passes_a_bridge(tmp_path, capsys):
     # The bridge is measured: a shorter limit than its 10 mm span flags it.
     code, out, _ = run(capsys, "print", design, "--max-bridge", "8")
     assert code == 1 and "PROBLEM bridge: bridge spans 10.0 mm (> 8.0)" in out
+
+
+@needs_cad
+@pytest.mark.skipif(not (shutil.which("prusa-slicer") or shutil.which("PrusaSlicer")), reason="needs prusa-slicer (the CAD sandbox image has it)")
+def test_print_slices_every_body_of_the_layout_on_one_plate(tmp_path, capsys):
+    design, code, out, err = render(capsys, tmp_path, BRIDGE_AND_LEDGE, "--print-layout")
+    assert code == 0, out + err
+    code, out, _ = run(capsys, "print", design, "--slice")
+    result = json.loads((design / "v1" / "print" / "print.json").read_text())
+    sliced = result["slicer"]
+    assert "error" not in sliced and (design / "v1" / "print" / "print.gcode").is_file()
+    assert f"slicer: {sliced['filament_g']} g, {sliced['time']}" in out
+    # The slicer's own warnings are problems like cadkit's own, and decide the exit status with them.
+    assert [p for p in result["problems"] if p.startswith("slicer says: ")] == [f"slicer says: {w}" for w in sliced.get("warnings", [])]
+    assert code == (1 if result["problems"] else 0)
+    # Sliced file by file, the last body's G-code would replace the rest: the plate weighs more than the last body alone.
+    (tmp_path / "workspace" / "ledge.scad").write_text(BRIDGE_AND_LEDGE)
+    alone = tmp_path / "outputs" / "ledge"
+    assert run(capsys, "render", tmp_path / "workspace" / "ledge.scad", "--design", alone, "--bodies", "ledge", "--print-layout")[0] == 0
+    run(capsys, "print", alone, "--slice")
+    ledge = json.loads((alone / "v1" / "print" / "print.json").read_text())["slicer"]
+    assert float(sliced["filament_g"]) > 1.5 * float(ledge["filament_g"])
 
 
 @needs_cad

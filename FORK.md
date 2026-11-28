@@ -346,7 +346,7 @@ After every upstream merge, run this checklist before pushing — passing unit t
 
 These come first, before the gates below and before any feature row, and they gate **every change that touches code, configuration or a prompt** — not only after a sync. Every test file they name is collected by `make test`, so when the Backend gate below runs it is also their run: read their result out of it first rather than running them twice on one tree. Run the commands here by themselves when `make test` is not in scope, and not at all for a change that cannot move them (prose, or a diff confined to `frontend/`). Each guards something a user loses outright and that the rest of the suite does not notice: a local model that refuses or silently truncates its first message, a private stack reachable from the network, an install that will not start after an update, a run that spends past its cap. A red critical check stops the change: fix it or take the change back out. It is environmental only when the same failure reproduces on the base revision in the same environment ([change_cycle.md](change_cycle.md#critical-checks)).
 
-- [ ] **Critical — local models fit their window** (§30, §45, §47): `cd backend && uv run pytest tests/test_context_fit_critical.py tests/test_context_overflow_guard.py tests/test_sync_ollama_models.py -q`. A fresh request in every composer mode fits a synced 32K Ollama entry with room for the conversation, the refusal names the real limit, compaction fires before the guard refuses, and the sync writes a `num_ctx` the agent can run in, never drops the `ollama:` sizing settings, and reads the GPU memory saved in Settings → Models. The same file pins the CAD design page (§58): `test_the_cad_design_page_adds_nothing_outside_a_design_run` (0 tokens in every mode, forged flag included) and `test_a_cad_design_run_fits_in_every_mode` (draft and finalize, `scad_draft` within 150 tokens).
+- [ ] **Critical — local models fit their window** (§30, §45, §47): `cd backend && uv run pytest tests/test_context_fit_critical.py tests/test_context_overflow_guard.py tests/test_sync_ollama_models.py -q`. A fresh request in every composer mode fits a synced 32K Ollama entry with room for the conversation, the refusal names the real limit, compaction fires before the guard refuses, and the sync writes a `num_ctx` the agent can run in, never drops the `ollama:` sizing settings, and reads the GPU memory saved in Settings → Models. The same file pins the CAD design page (§58): `test_the_cad_design_page_adds_nothing_outside_a_design_run` (0 tokens in every mode, forged flag included) and `test_a_cad_design_run_fits_in_every_mode` (the brief with its no-container line).
 - [ ] **Critical — nothing listens beyond loopback by default** (*Reaching the stack over Tailscale*): `cd backend && uv run pytest tests/test_compose_default_bind_host.py tests/test_deploy_loopback_cobind.py tests/test_docker_dev_tailnet.py -q`. A published port without an explicit bind address puts the whole stack on the LAN.
 - [ ] **Critical — an existing install still starts**: `scripts/check_config_version.sh` and `cd backend && uv run pytest tests/test_config_upgrade_script.py tests/test_config_version.py tests/test_migration_merge_points.py -q`. Example and chart versions agree, the upgrade delivers new keys without breaking the file, and Alembic has one head.
 - [ ] **Critical — a run cannot spend past its caps** (§10, §46): `cd backend && uv run pytest tests/test_spend_budget.py tests/test_spend_budget_config.py tests/test_spend_budget_middleware.py tests/test_run_limit_overrides.py tests/test_todo_middleware.py -q`. The money cap refuses at admission and stops a run in flight, no to-do reminder resumes a run it stopped (`spend_capped`), and Settings → Run limits reach every place a run reads a limit.
@@ -554,7 +554,8 @@ Then confirm each fork feature end-to-end:
 | **Internet switch on the conversation** (§27)                                                           | `cd backend && uv run pytest tests/test_internet_toggle.py` plus `python3 scripts/pnpm.py rstest run internet-toggle`. The asserts that are silent when broken: **absent is not off** (only an explicit `False` opts out, so IM/TUI/scheduler callers keep their tools), the group classification is an **allowlist** (an unclassified group is dropped — a blocklist of `web`/`browser` passes everything else and ships the next provider group), **MCP and ACP tools go too**, a **subagent inherits** the switch from the parent run context, and the offline notice is appended to the _rendered_ prompt rather than a template placeholder an operator's saved `SYSTEM_PROMPT.md` would not have. UI wiring: `pnpm test:e2e internet-toggle` drives the composer control by its own `data-slot="internet-toggle"` — and because the composer is shared, a change to it means the **whole** `pnpm test:e2e`, not that one spec.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Tiered voice input** (§24)                                                                            | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **CAD model preview** (§56) | `cd examples/deerflow-extension-cad-preview && node --test` and `cd frontend && pnpm test:e2e cad-preview`. Silent when broken: `twenty file switches leave one live context…` (a leaked WebGL context blanks old previews only after about sixteen switches; §56 says why) and the bounding box against `report.json` (1000× off if the GLB is not read as metres). |
-| **CAD design page** (§58) | `cd examples/deerflow-extension-cad-design && node --test && ../../backend/.venv/bin/python -m pytest tests -q`, `cd backend && uv run pytest tests/test_bundled_cad_design_extension.py tests/test_cad_design_end_to_end.py -q` and `cd frontend && pnpm test:e2e cad-design`; the token half runs in the first critical check. Silent when broken: the brief or the tool filter dropped by the host's isolation wrapper (`test_cad_design_end_to_end.py`), `scad_draft` reaching a chat or a subagent (`test_the_cad_design_page_adds_nothing_outside_a_design_run`, `test_delegated_subagents_get_the_filter_that_removes_scad_draft`, the package's `test_subagents_never_receive_the_drafting_tool`), the Worker's time limit (`a render past its limit terminates the Worker…`; a model's infinite loop otherwise freezes renders for good), the wasm hash (`a changed byte fails the check…`, `the shipped wasm is the npm package's binary and its hashes are baked in`), and snapshot equality (`test_the_installed_snapshot_matches_the_example_source`). |
+| **CAD design page** (§58) | `cd examples/deerflow-extension-cad-design && node --test && ../../backend/.venv/bin/python -m pytest tests -q`, `cd backend && uv run pytest tests/test_bundled_cad_design_extension.py tests/test_cad_design_end_to_end.py tests/test_sandbox_cad_image.py -q`, `cd frontend && pnpm test:e2e cad-design`; tokens in the first critical check. Silent when broken: the brief lost in the host's isolation wrapper and the version folders unread through the host routes (`test_cad_design_end_to_end.py`), the image's `FROM` off the pin, snapshot drift. `cad_build` and the browser renderer were removed on purpose (§51): a sync that restores them re-adds a removed feature. |
+| **CAD image smoke** (§58) | `make sandbox-cad-image && bash docker/sandbox-cad/smoke.sh` (Docker; CI `sandbox-cad-image.yml`): the cadkit loop inside the image as uid 1000, which no offline test runs. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 
@@ -3185,7 +3186,7 @@ This fork rounds out the containerized AIO sandbox into a first-class "hand it a
   - The node keeps the host's mode and group inside the container. On Debian/Ubuntu that is `0660 root:kvm`, which the sandbox's unprivileged shell user cannot open, so QEMU still falls back to emulation until the host has the udev rule from `config.example.yaml` (`KERNEL=="kvm", MODE="0666"`, which lets every local host user use KVM). No post-start root `chmod` was added, deliberately.
   - Guest RAM counts against the container's 2g memory limit; raise `DEER_FLOW_SANDBOX_MEMORY` in the Gateway environment for a larger guest.
   - A container adopted from before the key was set has no device until it is recreated, and `make sandbox-enable MODE=container` rewrites the sandbox section, so `devices:` and a custom `image:` have to be set again afterwards (the block it writes carries a commented hint).
-- **A VM needs a sandbox image that already contains QEMU, and none is shipped.** With `sudo` blocked, `apt-get install qemu-*` cannot succeed at run time, so the route is a custom `sandbox.image` built `FROM` the pinned tag and rebuilt when the pin moves. A derived image was proposed in that change — `docker/sandbox-vm/Dockerfile` adding `qemu-system-x86` (or `qemu-system-arm` and `qemu-efi-aarch64`), `qemu-utils`, `genisoimage` and `openssh-client`, with a `make sandbox-vm-image` target and a test that its `FROM` equals the pinned tag — and was **not shipped**: it adds a file and a Makefile target the owner has not approved, and its build assumes the base image's default user is root, which is unverified. Whether the pinned image already ships any QEMU binary was not checked either. Without KVM a guest still runs under TCG — software emulation, slow — which needs no device and no capability.
+- **A VM needs a sandbox image that already contains QEMU, and none is shipped.** With `sudo` blocked, `apt-get install qemu-*` cannot succeed at run time, so the route is a custom `sandbox.image` built `FROM` the pinned tag and rebuilt when the pin moves. A derived image was proposed in that change — `docker/sandbox-vm/Dockerfile` adding `qemu-system-x86` (or `qemu-system-arm` and `qemu-efi-aarch64`), `qemu-utils`, `genisoimage` and `openssh-client`, with a `make sandbox-vm-image` target and a test that its `FROM` equals the pinned tag — and was **not shipped**: it adds a file and a Makefile target the owner has not approved, and its build assumes the base image's default user is root, which is unverified. Whether the pinned image already ships any QEMU binary was not checked either. Without KVM a guest still runs under TCG — software emulation, slow — which needs no device and no capability. The CAD image (§58) later shipped in exactly that shape for OpenSCAD and a slicer (`docker/sandbox-cad/`, `make sandbox-cad-image`, a `FROM` test, its own CI build), and its build showed that the base image's entrypoint starts as root and drops to its own user, so a layer can install as root; a VM image would follow it.
 - **A VM recipe in `repo-runner`.** The skill's *When the project needs a virtual machine* section gives the agent a path it had no guidance for: probe first (`id -u`, `uname -m`, `nproc`, the cgroup memory limit, `/dev/kvm`, `qemu-system-$(uname -m)` and the helper binaries); stop and tell the user a QEMU-capable sandbox image is required when QEMU is absent; use KVM only when `/dev/kvm` is readable and writable, otherwise TCG with a warning that it is slow; keep every file under `/mnt/user-data/workspace/vm/`, the only path that persists; build a cloud-init NoCloud seed with `genisoimage`/`cloud-localds` or serve it over HTTP, never with `dd`/`mkfs`, which the bash audit blocks; launch headless and daemonized with user-mode networking and SSH forwarded on `127.0.0.1:2222`; poll in short commands rather than one long foreground wait; and re-check the pidfile at the start of every later turn, because Stop in the run that started it, a recycled container, warm eviction beyond `replicas` or a Gateway shutdown kills the guest. `test_sandbox_audit_middleware.py::test_repo_runner_vm_recipe_commands_are_not_blocked` pins that the audit lets the recipe's commands through; nothing pins that the recipe works.
 - **None of the VM path has been run.** That change was made with no Docker daemon, no `/dev/kvm` and no QEMU available. What is verified: the allowlist, the `docker run` argument list with `subprocess.run` stubbed, the audit classification of the recipe's commands, and the skill review gate. What is not: (1) the uid the pinned image's shell runs as; (2) whether that user can open a forwarded `/dev/kvm`, with and without the udev rule; (3) that Docker's error for a missing device contains the device path, which the `sandbox.devices` hint depends on; (4) which of `qemu-system-*`, `qemu-img`, `genisoimage`/`cloud-localds`, `ssh`, `setsid` and `python3` the pinned image ships; (5) the recipe end to end, including the HTTP seed form, the aarch64 additions and whether a daemonized QEMU survives a transient session or a hard timeout; (6) guest egress through the sandbox proxy in allowlist mode; (7) that a rootless device node keeps the host's mode and group. On a Linux Docker host with KVM, this answers 1, 2, 4 and 7 (drop `--device ...` for the no-KVM baseline):
 
@@ -6516,106 +6517,160 @@ projects the channel), `test_goal_worker.py` (the goal after a
 `tests/e2e/deviation-monitor.spec.ts`, whose stop case renders the fixture's
 real stop message.
 
-### 58. CAD design page
+### 58. CAD design page and the CAD container
 
-**Why.** Iterating on a part is looking, not reading. In a chat the CAD module's
-picture (§51) and the rotating preview (§56) sit behind the messages, and a
-part's history is scattered across turns and file names. Roadmap items 61-64
-asked for CAD as a place of its own: the prompt on one half of the screen, a 3D
-preview on the other that redraws while the model is still writing, versions
-made by every render, an editable script with sliders, and a Finalize button to
-the measured part. The owner fixed four decisions on 2026-11-23: drafts are
-OpenSCAD rendered in the viewer's browser, the final part stays CadQuery through
-`cad_build`, a design is its own stored entity, and the script is editable with
-its top-level numbers as sliders.
+**Why.** Iterating on a part is looking, not reading. Roadmap items 61-64 asked
+for CAD as a place of its own: the conversation on one half of the screen, the
+part on the other, and a version for every render. The first release (2026-11-23)
+drafted OpenSCAD that the viewer's browser rendered, with sliders and a Finalize
+step that ported the draft to CadQuery for the CAD module's `cad_build` (§51).
+On 2026-11-25 the owner chose the loop that proves itself on real parts instead:
+the agent writes parametric multi-body OpenSCAD, renders each body with the
+`openscad` CLI, checks the meshes in Python (clashes across poses and sweeps,
+gaps), looks at cross-sections and a shaded render, checks the print (overhangs,
+bridges, thin walls, a slicer without supports) and the strength (hand
+calculations), writes STEP through CadQuery's kernel, iterates and delivers.
+That loop needs a shell and a set of tools, so it runs in the per-thread
+container, `cad_build` and the in-browser renderer were removed, and this page
+became a view of what the agent renders there. The decision behind it: model
+code runs **never in the Gateway, and only in the per-thread container**.
 
-**What.** `examples/deerflow-extension-cad-design`, a full-stack plugin (namespace
-`cad-design`): the page `/workspace/extensions/cad-design/designs` (sidebar
-**Designs**, `layout: "full"`), a per-user SQLite design store (`store.py`:
-designs, versions with source, parent, OpenSCAD, parameters, render result and
-finalize result; soft delete into a Trash inside the page), seventeen backend
-actions (`actions.py`), one contributed route that streams a finalized design's
-files, the model tool `scad_draft` (it only stores the whole file as a version
-and moves the head; it runs nothing), and a lead middleware that scopes it
-(`middleware.py`). The browser half (`ui/`, built by `build.mjs` into
-`static/dist`) follows the run live through the host's join route, renders the
-streamed file's longest complete prefix in an OpenSCAD Worker (300 ms debounce,
-`$fn` capped at 24 live), reports the full render back as the version's render,
-and offers the Code tab (CodeMirror 6), Parameters (top-level `name = value;`
-with an optional `// [min:step:max]`), Versions and Finalize. A design run
-carries `plugin_options["cad-design"] = {design_id, head, phase}`; on it the
-middleware keeps `scad_draft` and appends the drafting brief and a dated,
-bounded version note (the head's render result, a finalize result that needs
-attention, a capped diff of the user's edits since the model's last version).
-In the finalize phase it removes `scad_draft`, tells the model to port the head
-to CadQuery and call `cad_build` with the draft's rendered size, and records
-each `cad_build` answer into the version's `final`. The package README holds the
-user's half, `docs/guide/cad-design.md` the guide, the package `AGENTS.md` the
-agent's half.
+**What.**
 
-**Bundled and on by default,** like `cad` (§51) and `cad-preview` (§56): a snapshot
-in `backend/extensions/sources/deerflow-extension-cad-design`, an
-extensions-group entry and a `[tool.uv.sources]` path in `backend/pyproject.toml`
-with no platform marker (the Python half needs only the extension API and
-FastAPI; the rest is built browser assets), an enabled `plugins:` record in
-`config.example.yaml`, and `config_upgrade.py` migration 78, which names
-`cad-design` alone, so `config_version` is 78 in the example and both chart
-copies. Like every migration that delivers a record, it rewrites `config.yaml`
-without its comments and keeps the original as `config.yaml.bak`; the release
-note says so. `make extension-disable NAME=cad-design` turns it off and keeps
-the record. Rejected: off by default. The page costs nothing on a chat request
-(below), and a page an operator must first discover is a page nobody opens.
+- **The page.** `examples/deerflow-extension-cad-design`, a full-stack plugin
+  (namespace `cad-design`, MIT): `/workspace/extensions/cad-design/designs`
+  (sidebar **Designs**, `layout: "full"`), the Designs list and a Trash, one
+  hidden conversation per design (`metadata.deerflow_listed: false`), the chat
+  pane following the run live (`joinRunStream`), and on the right the selected
+  version (the newest by default) with Preview (each body's STL from
+  `report.json`, one colour and a show and hide switch per body), Views (the
+  PNGs), Checks (bounded summaries of `report.json`, `check.json` and
+  `print/print.json`), Code (`model.scad`, read-only) and Files (download
+  links). It lists the versions again on each tool result while a run streams
+  and when the run settles, and shows the setup commands when the host is not in
+  container mode.
+- **The store keeps designs only.** Eleven backend actions (`actions.py`):
+  `list_designs`, `create_design`, `get_design` (with the fixed `folder` and the
+  host's `container` flag), `rename_design`, `delete_design`, `restore_design`,
+  `purge_design` (which also deletes the thread through `delete_thread`),
+  `prompt` (with an optional `viewing` version: when it is not the newest, the
+  user's message gets a short suffix naming it), `messages`, `run_status` and
+  `cancel`. No plugin tool and no contributed route remain.
+- **Versions are folders.** A design's thread always works in
+  `/mnt/user-data/outputs/design`: the model edits
+  `/mnt/user-data/workspace/design/model.scad` in place, and every
+  `cadkit.py render --design /mnt/user-data/outputs/design --print-layout`
+  writes the next `v<N>/` (the `.scad`, one STL per body, `assembly.glb`,
+  `report.json`, `check.json`, `views/`, `print/`, and on export the STEP files
+  and `bodies.3mf`).
+- **The brief.** A lead middleware at `MODEL_LOGICAL` (`DesignMode`) appends a
+  short brief (808 characters) to the system message of a design run: the page
+  shows the newest version folder; follow the `cad-modeling` skill with the
+  fixed paths; read the newest `report.json` before changing anything; end each
+  turn with what changed, which checks pass and what is left. When the request
+  has no `bash` tool it adds one line telling the model to give the user the
+  setup commands and stop. Everything else gets nothing.
+- **`context.threadFiles`, a generic host hook.** `list(threadId, path, {signal})`,
+  `read(threadId, path, {signal, maxBytes})` and `url(threadId, path, {download})`
+  on `SurfaceContext`, for any plugin page. They accept only plain paths at or
+  under `/mnt/user-data/outputs/` (no `.`, `..`, empty segment, backslash or
+  control character), and go through the host's owner-checked routes
+  `GET /api/threads/{tid}/files?path=...` (`routers/thread_files.py`) and
+  `GET /api/threads/{tid}/artifacts/<path>` (`routers/artifacts.py`), which work
+  while a run is active. A read is capped at 25 MiB even without a
+  Content-Length.
+- **`HostPolicySnapshot.sandbox_container`** (extension API 0.2.14 → 0.2.15,
+  additive): `project_host_policy()` sets it when `sandbox.use` is the AIO
+  provider in local container mode (no `base_url`, no `provisioner_url`), the
+  only mode that mounts the thread's host directories. `get_design` and
+  `list_designs` return it as `container`.
+- **The CAD image.** `docker/sandbox-cad/Dockerfile` with `requirements.txt`:
+  `FROM` the pinned `ghcr.io/agent-infra/sandbox:1.11.0` (Ubuntu 22.04, Python
+  3.10), apt `openscad` (2021.01), `prusa-slicer` (2.4), `fonts-dejavu-core` and
+  `fonts-liberation2`, and pip `trimesh`, `manifold3d`, `shapely`, `rtree` and
+  `cadquery==2.7.0` with `cadquery-ocp==7.8.1.1.post1` into the image's own
+  `python3`, every package the image already ships held at its version by a
+  constraints file. `make sandbox-cad-image` builds the local tag
+  `deerflow-sandbox-cad:local`; `make sandbox-enable MODE=container IMAGE=cad`
+  (`scripts/sandbox_toggle.py --image cad`, container mode only) writes it as
+  `image:`. `docker/sandbox-cad/smoke.sh` runs the whole cadkit loop in the image
+  as uid 1000 without capabilities, under the default memory cap and with no
+  network; `.github/workflows/sandbox-cad-image.yml` builds the image and runs
+  the smoke when `docker/sandbox-cad/**`, `skills/public/cad-modeling/**` or the
+  toggle change. The operator's half is in `backend/docs/CONFIGURATION.md`
+  (*The shipped example: the CAD image*).
+- **The skill.** `skills/public/cad-modeling` (`SKILL.md`, `references/openscad.md`,
+  `checks.md`, `fdm.md`, `strength.md`) and `scripts/cadkit.py` (`render`,
+  `check`, `views`, `print`, `export`; exit 0 pass, 1 a check failed, 2 could not
+  run; a summary on stdout, `ERROR` on stderr). It works in any container-mode
+  chat; the page only fixes the paths.
+- **Config migration 79** removes the retired `cad` record (matched by module or
+  package, not by name) and the unused `max_source_bytes` from the `cad-design`
+  record; `config_version` is 79 in the example and both chart copies. Like every
+  structural migration it rewrites `config.yaml` without its comments and keeps
+  `config.yaml.bak`. Migration 73 no longer delivers `cad`.
+
+The package README holds the user's half, `docs/guide/cad-design.md` the guide,
+and the package `AGENTS.md` the agent's half.
+
+**Bundled and on by default,** like `cad-preview` (§56): a snapshot in
+`backend/extensions/sources/deerflow-extension-cad-design`, an extensions-group
+entry and a `[tool.uv.sources]` path in `backend/pyproject.toml` with no platform
+marker (the Python half needs only the extension API and FastAPI; the rest is
+built browser assets), an enabled `plugins:` record in `config.example.yaml`,
+and migration 78, which delivered `cad-design` alone. `make extension-disable
+NAME=cad-design` turns it off and keeps the record. Rejected: off by default. The
+page costs nothing on a chat request (below), and without the container it says
+what to run instead of failing.
 
 **The decisions, and what was rejected.**
 
-- **OpenSCAD runs in the viewer's browser; the Gateway never executes model-written
-  code.** That is the rule under roadmap.md's *Deliberately not* (*A CAD tool that
-  executes what the model wrote*): the only routes are the allow-list interpreter
-  (§51) and the user's own tab, where the model's code has no more reach than a
-  web page. A server-side render, or a server-side check of a draft, was
-  rejected as that shortcut under another name. CadQuery still runs only inside
-  `cad_build`, after the model has ported the draft.
-- **OpenSCAD is GPL-2.0-or-later, and the binary ships inside the package.**
-  `openscad-wasm-prebuilt` 1.2.0 (exact pin, npm) inlines its 8,178,497-byte
-  WebAssembly binary as base64 in one 11 MB module, over the host's 4 MiB
-  per-asset cap. `build.mjs` (with `openscad-source.mjs`) extracts the bytes and
-  ships them gzip-compressed as one 2,670,268-byte asset, `openscad.gz.wasm`
-  (`.wasm` because gzip is not an allowed asset type; the build would split it
-  into 3.5 MiB pieces if it outgrew one file, and fails any file over 4 MiB or a
-  package over 16 MiB). The SHA-256 of each piece and of the raw binary are
-  baked into the bundle; the page fetches the asset from the host origin, checks
-  it, inflates it with `DecompressionStream`, checks the result again, and posts
-  the bytes to the Worker. The Emscripten loader goes into the Worker with the
-  base64 literal removed and its `fetch` and `XMLHttpRequest` paths replaced by
-  a function that throws; the build fails if a network path is left. Because the
-  package distributes the binary, the package is GPL-2.0-or-later (`pyproject.toml`,
-  `package.json`), with the licence and source links in `THIRD_PARTY_NOTICES.md`.
-  Rejected: a CDN or a separate download (nothing is fetched from outside the
-  server, and an operator would have to fetch it), raising the asset cap for one
-  extension, and serving it as a host asset outside the package.
-- **Opaque-origin Worker with no network code.** Plugin assets carry
-  `Content-Security-Policy: sandbox` (§56), so the Worker cannot fetch or import
-  anyway; it is one self-contained module, instantiates the bytes it is handed,
-  sees only the source it is sent, and is terminated and recreated past a hard
-  limit (8 s live, 30 s final, `ui/scad-client.js`).
-- **The brief rides the system message, not a skill.** The roadmap suggested a
-  drafting skill loaded on design threads; a skill is offered to every run and
-  read on demand, while the brief must reach design runs only and every design
-  run. The workflows extension's `ultracode.py` pattern appends it after the
-  prompt, so a custom `SYSTEM_PROMPT.md` still receives it.
+- **Model code runs only in the per-thread container; the Gateway executes
+  nothing.** The backend stores titles and starts runs; it renders, parses and
+  serves no design file of its own. Rejected: OpenSCAD in the Gateway, as a
+  render or as a check of the model's file. There is no Gateway execution route,
+  and a server-side render is the shortcut that roadmap.md's *Deliberately not*
+  declines under another name.
+- **The in-browser OpenSCAD renderer was dropped.** It rendered the draft for the
+  user, but the model could not check what it could not render: it saw only a
+  summary on its next turn, and could not move bodies through poses, cut
+  sections, slice, or export STEP. It also cost an 8 MB GPL engine, a hash check
+  that had to work without `crypto.subtle` over a tailnet's plain http, and a
+  Worker time limit. The package is MIT again.
+- **`cad_build` was not kept as a fallback.** Two CAD paths would give the model
+  two procedures to choose between, and the tool cost about 150 tokens on every
+  request of every install (§51).
+- **Versions are the folders, not store rows.** The files are the record the
+  model reads back (`report.json` first), so a second copy in SQLite could only
+  drift from them. Files from the first release also hold a `versions` table and
+  a `head_version_id` column; they keep opening and are never altered, and their
+  drafts are no longer shown.
+- **One fixed folder per design's thread.** Each design has its own thread, so a
+  fixed path keeps the brief static (and cacheable) and the page's lookup
+  trivial.
+- **The page reads files through a generic host hook, not a route of its own.**
+  The first release served finalized files through a contributed route; the host
+  already has owner-checked file routes, and any plugin that shows a thread's
+  outputs needs the same access. Outputs only, because a page has no business
+  with uploads or the workspace.
+- **Container mode is a host fact in the extension contract.** The page cannot
+  probe the sandbox itself, and an additive `HostPolicySnapshot` field reaches
+  the backend without a new service. A host older than 0.2.15 reads as no
+  container.
+- **The image installs into the base `python3` with a constraints file**, so the
+  agent's `python3` has the libraries and the CAD wheels cannot move numpy or
+  matplotlib under the image's Jupyter. CadQuery is 2.7.0 because 2.8.0 needs
+  Python 3.11. The image is built locally and never published: nothing would
+  keep a registry copy current with the pin.
+- **The brief rides the system message, not a skill**, because it must reach
+  every design run and no other; the skill stays the procedure, shared with
+  ordinary container chats. The workflows extension's `ultracode.py` pattern
+  appends it after the prompt, so a custom `SYSTEM_PROMPT.md` still receives it.
 - **The design flag is trusted only through the thread.** `plugin_options` is
   client input, so a design run is one whose `design_id` names a live design
-  whose conversation is the run's own thread (`Store.design_for_thread`); the
-  host admitted the run on a thread the caller owns. The tool handler checks the
-  same again, because filtering a schema does not stop a call.
-- **Finalize judges size within max(0.5 mm, 2 %) per axis.** The draft's box is a
-  faceted mesh's, so `cad_build`'s own 0.1 % box check fails a true cylinder
-  against it; a failed box check alone is not a wrong size, and the page's own
-  check decides the size. `cad_build` exports the part only when every check
-  passes, though, so a box-only miss within tolerance is recorded as failed with
-  a request to rebuild against the measured size, and a version is built only
-  when a deliverable (STEP, GLB, STL or 3MF, not `*.failed.*`) is among its files.
-- **Generic host hooks, each usable by any plugin** (extension API 0.2.13 → 0.2.14):
+  whose conversation is the run's own thread (`Store.design_for_thread`).
+- **Generic host hooks from the first release, each usable by any plugin**
+  (extension API 0.2.13 → 0.2.14):
   - `AgentRuns.start(..., stream_mode=[...])`, a subset of `values`,
     `messages-tuple`, `updates`, `custom` (anything else is a 422 before
     admission): any plugin page that starts a run needs the tokens and
@@ -6642,135 +6697,126 @@ the record. Rejected: off by default. The page costs nothing on a chat request
   - A `MODEL_LOGICAL` model wrapper may adjust the request it hands on
     (`IsolatedMiddleware(adjusts_model_requests=True)`, set by
     `injection.isolate` from the placement; `admit_model_request_adjustment`):
-    remove bound tools and append to the system message, nothing else. Any
-    plugin that binds a tool for one kind of run needs it to keep that tool and
-    its instructions off every other run. Another model, messages or tool choice,
-    an added tool or a rewritten system message is refused with one warning per
-    agent build, and the original request goes on; every other placement and
-    every tool call stays observational, now with that warning instead of
-    silence. The position is outer of retries and of the context guard, so the
-    guard measures what is sent. Rejected: an opt-out from the wrapper (a broken
-    plugin would break runs), a new placement or API field (the placement already
-    says where), and carrying the brief as a hidden input message (it would not
-    take `scad_draft` off ordinary chats).
-- **Viewer reuse by relative import.** `ui/` imports cad-preview's STL reader,
+    remove bound tools and append to the system message, nothing else. Another
+    model, messages or tool choice, an added tool or a rewritten system message
+    is refused with one warning per agent build, and the original request goes
+    on; every other placement and every tool call stays observational, now with
+    that warning instead of silence. The position is outer of retries and of the
+    context guard, so the guard measures what is sent. Rejected: an opt-out from
+    the wrapper (a broken plugin would break runs), a new placement or API field
+    (the placement already says where), and carrying the brief as a hidden input
+    message.
+- **Viewer reuse by relative import.** `ui/` imports cad-preview's STL parser,
   mesh preparation and limits from `../../deerflow-extension-cad-preview/ui/`
   and builds its model Worker, so both packages stay side by side in the
   snapshot; three.js is pinned at cad-preview's 0.187.0.
 
-**The first release's brief never reached the model.** An owner's design run
-built the part with `cad_build`, `bash` and `present_files` like an ordinary chat
-and never called `scad_draft`, so no draft version existed and the preview stayed
-empty. The host's isolation wrapper handed the original request downstream, by
-the first extension contract's design, so `DesignMode`'s removal and brief were
-dropped on every call: design runs got `scad_draft` with only its one-line
-description, and every ordinary chat and subagent kept it. The middleware's tests
-called it bare, past the wrapper. The fix is the `MODEL_LOGICAL` adjustment above;
-`backend/tests/test_cad_design_end_to_end.py` drives the page's `prompt` action
-through the real Gateway, loader, run worker and lead agent with only the chat
-model faked, and `test_context_fit_critical.py` measures through the wrapper. The
-page also says when a prompt or repair turn ended without a new draft (*The model
-answered without saving a draft, so the preview did not change*), instead of
-showing nothing (`endedWithoutDraft` in `ui/outcomes.js`). Draft and repair runs
-also lose `cad_build`, and the brief says not to follow the `cad-modeling` skill:
-the owner's answer followed that skill's Step 7 word for word, and with both tools
-offered a run can build behind the preview's back. Finalize, the owner's chosen
-path to CadQuery, keeps `cad_build`; ordinary chats are untouched.
+**The first release's brief never reached the model.** The host's isolation
+wrapper handed the original request downstream, by the first extension
+contract's design, so the middleware's brief and tool filter were dropped on
+every call, and its tests called it bare, past the wrapper. The fix is the
+`MODEL_LOGICAL` adjustment above; `backend/tests/test_cad_design_end_to_end.py`
+drives the page's `prompt` action through the real Gateway, loader, run worker
+and lead agent with only the chat model faked, and `test_context_fit_critical.py`
+measures through the wrapper. The same fix made the Ultracode brief reach the
+model (§44).
 
 **What must not be simplified away.**
 
-- **`scad_draft` costs 0 tokens outside design runs.** The host binds every
-  enabled plugin tool on every request; `DesignMode` removes it from every lead
-  model call without the design flag, before touching the store, and
-  `NoDrafting` removes it from every subagent call. Both work only because the
-  host forwards a `MODEL_LOGICAL` adjustment; a test of the bare middleware
-  proves nothing. The middleware is
-  registered even when the record starts disabled, because an administrator
-  can switch the plugin on at runtime. `test_context_fit_critical.py` measures
-  both directions in every mode, and a forged flag, through the host's wrapper;
-  `test_cad_design_end_to_end.py` checks it on real runs.
-- **Draft runs cannot build.** `DesignMode` drops `cad_build` from drafting
-  calls (draft and repair) and `scad_draft` from every other call. Offering both
-  lets a model follow the cad-modeling skill and build without drafting, which
-  is the reported empty preview; `test_cad_design_end_to_end.py` pins it.
-- **A turn without a draft says so.** Without the note, a model that answers in
-  text leaves the preview as it was and the user sees nothing happen.
-- **The Worker's time limit and its recreation.** Without them, a model-written
-  infinite loop freezes the page's renders for good; nothing else notices.
-- **The wasm hash check, both of the piece and of the inflated binary.** Dropping
-  it still renders; it only stops refusing a tampered or truncated asset.
-- **The hash check works without `crypto.subtle`.** Browsers expose SubtleCrypto
-  only in secure contexts, and this fork is reached at `http://100.x:2026` over a
-  tailnet; a check that required it refused to load OpenSCAD there, so every draft
-  "did not render" whatever the model. `ui/sha256.js` computes the same digest in
-  JavaScript (about 170 ms for the 9 MiB binary). Pinned by `sha256.test.mjs`
-  against `node:crypto`, the no-`subtle` case in `wasm-loader.test.mjs`, and the
-  insecure-origin case in `cad-design.spec.ts`.
+- **The brief costs 0 tokens outside design runs, measured through the host's
+  wrapper.** `DesignMode` returns before touching the store when the run carries
+  no design flag, and a forged flag whose design is not the thread's own gets
+  nothing. It works only because the host forwards a `MODEL_LOGICAL`
+  adjustment; a test of the bare middleware proves nothing.
+  `test_context_fit_critical.py` measures both directions in every mode, and the
+  design run's longest form (brief plus the no-container line) within
+  `FIXED_REQUEST_ALLOWANCE_TOKENS`. The middleware is registered even when the
+  record starts disabled, because an administrator can switch the plugin on at
+  runtime.
+- **`threadFiles` checks the path before any request.** The routes confine paths
+  again, but the hook is what keeps a page from asking for uploads, the
+  workspace or another route at all.
+- **Every file in a version folder is model-written, untrusted input.** JSON is
+  parsed with bounds and shown with `textContent`, never `innerHTML`; meshes are
+  parsed only by cad-preview's capped parser in a Worker; model text in the
+  conversation pane is `textContent` too.
+- **One WebGL context per design view, released on dispose, meshes updated in
+  place** (§56's reason).
+- **The image's `FROM` equals the pinned tag** (`backend/tests/test_sandbox_cad_image.py`):
+  the toggle pins `ghcr.io/agent-infra/sandbox:1.11.0` because the mirror's
+  `:latest` lacks the `/v1/bash/*` routes, and an image built from another base
+  can fail in ways only a live sandbox shows.
 - **The snapshot equals the example.** After any change under `ui/`, rebuild
   (`node build.mjs`), commit `static/dist/` and `ui_manifest.json`, and copy the
   package over the snapshot without `node_modules`, `.venv` or `__pycache__`.
-- **One automatic repair per model version, stored with the version.** A draft
-  that keeps failing must not loop runs. An engine that fails to load, crashes
-  or times out stores nothing and starts no repair.
-- **One WebGL context per design view, released on dispose, mesh updated in
-  place** (§56's reason).
-- **Model text is rendered with `textContent`.** The conversation pane shows
-  model output; no `innerHTML` of model text.
+- **The old store schema is never altered**, and `resolve_config` keeps accepting
+  `max_source_bytes`: an install that has not run migration 79 must still load.
 
-**Known gaps.** The OpenSCAD build has no fonts, so `text()` does not render in
-the browser; the brief tells the model to avoid it, and lettering belongs to the
-CadQuery part (§51). No live model run happened here: there were no LLM keys and
-no GPU, so the drafting brief, the repair turn and Finalize were exercised with
-faked runs, and the eval's design-path band (`make cad-eval MODEL=<name> CAD_PATH=design`,
-offline-tested) has no rows yet. Those rows, and items 48 and 50 of roadmap.md,
-need the owner's hardware; so does the page on a real phone with a GPU
-browser. Version thumbnails are not drawn (`thumbnail: null`). A dropped run
-stream is not resumed; the page polls the run's status and shows the result
-when it ends.
+**Known gaps.** No live model run happened here (no LLM keys, no GPU): the brief
+and the page were exercised with faked runs, and the skill's loop only by its
+offline tests and the image smoke. The image was built and the smoke passed
+locally, as uid 1000 under the sandbox's hardening flags, but it has never run
+under the Gateway's own `docker run` on the owner's host, with the image's
+services started. OpenSCAD 2021.01 has no Manifold backend, so renders are
+CGAL-slow on curved booleans. The STEP is faceted: written from the mesh, each
+triangle a face, and refused above 60,000 triangles per body. The container's
+2 GiB default memory can be short for a big STEP export
+(`DEER_FLOW_SANDBOX_MEMORY=4g`). `text()` has only the DejaVu and Liberation
+fonts. The setup wizard (`scripts/wizard/writer.py`) still writes the stock
+image, so an operator who picks container mode there selects the CAD image
+afterwards with `IMAGE=cad`. Version thumbnails are not drawn. A dropped run
+stream is not resumed; the page polls the run's status and lists the versions
+when it ends. The page on a real phone with a GPU browser is still the owner's
+acceptance check.
 
-**On an upstream sync.** The package is fork-only. Upstream owns every host file
-it needs: `backend/app/gateway/extension_agent_runs.py` (`stream_mode`,
-`delete_thread`), `deerflow/extensions/isolation.py` and `injection.py` (the
-`MODEL_LOGICAL` adjustment; an upstream rewrite that drops it silently takes the
-brief and the tool filter away again, which `test_cad_design_end_to_end.py`
-catches), the extension docs `middleware.mdx` and `index.mdx` in both locales,
+**On an upstream sync.** The package, the image, the skill and cadkit are
+fork-only. Upstream owns every host file the page needs:
+`backend/app/gateway/extension_agent_runs.py` (`stream_mode`, `delete_thread`),
+`deerflow/extensions/isolation.py` and `injection.py` (the `MODEL_LOGICAL`
+adjustment; an upstream rewrite that drops it silently takes the brief away
+again, which `test_cad_design_end_to_end.py` catches), `deerflow/extensions/policy.py`
+and `deerflow_extension_api/contracts.py` (`sandbox_container`),
 `deerflow_extension_api/agent_runs.py` and `API_VERSION`,
-`frontend/src/core/extensions/` (`services.ts`, `surfaces.ts`, `contracts.ts`,
-`registry.ts`, `catalog.ts`, `bundled-documentation.json`),
+`backend/app/gateway/routers/thread_files.py` and `artifacts.py` (the routes
+under `threadFiles`), the extension docs `middleware.mdx` and `index.mdx` in both
+locales, `frontend/src/core/extensions/` (`services.ts`, `surfaces.ts`,
+`contracts.ts`, `registry.ts`, `catalog.ts`, `bundled-documentation.json`),
 `components/workspace/plugin-page.tsx` and `plugin-surfaces.tsx`,
 `core/threads/thread-search-query.ts` and the i18n locales. If upstream brings
-its own 0.2.14, move the fork's floor past it (the package's `@extension` marker
-and requirement, `docs/full-stack-plugins.md`, `backend/docs/extension-agent-runs.md`).
-An upstream change to the run stream's event shapes breaks the live preview
-silently (`ui/run-stream.js`; the final render after the run still works), and a
-change to thread listing can bring hidden design threads back into the sidebar.
-A sync that touches the example fails `test_bundled_cad_design_extension.py`
-until the snapshot is refreshed.
+its own 0.2.14 or 0.2.15, move the fork's floor past it (the package's
+`@extension` marker and requirement, `docs/full-stack-plugins.md`,
+`backend/docs/extension-agent-runs.md`). An upstream change to the run stream's
+event shapes breaks the live chat pane silently (`ui/run-stream.js`; the
+versions still list when the run ends), a change to thread listing can bring
+hidden design threads back into the sidebar, and a change to the AIO pin moves
+the image's base: rebuild and run the smoke. A sync that touches the example
+fails `test_bundled_cad_design_extension.py` until the snapshot is refreshed.
 
 Coverage: the package's `node --test` suites (`build` — the manifest, the asset
-caps, the shipped wasm against the npm binary and its baked hashes, Workers that
-fetch and import nothing; `built-worker` — the real Worker renders a cube, a
-boolean difference, a syntax error with its line, and cannot read outside the
-source; `wasm-loader`, `scad-client` — the time limit, superseded live renders;
-`run-stream`, `scad-text`, `params`, `metrics`, `outcomes`, `versions`,
-`scad-language`, `openscad-source`, `scad-engine`) and its pytest suites (`test_store`,
-`test_actions`, `test_tool`, `test_middleware`, `test_router`, `test_scad`,
-`test_install`, `test_registration`); `scripts/check_extension.py` on the package;
-`backend/tests/test_bundled_cad_design_extension.py` (snapshot equality, the
-install on every host, the shipped record, subagents' filter through its wrapper,
-and migration 78's cases); `test_cad_design_end_to_end.py` (the page's prompt
-action on the real Gateway: the brief and `scad_draft` reach the model and the
-draft is stored; an ordinary chat, with or without a forged flag, gets neither;
-the Ultracode brief arrives); `test_extension_isolation.py` and
-`test_extension_injection.py` (what a `MODEL_LOGICAL` wrapper may hand on, what
-is refused and reported, and that only that placement may);
-`test_context_fit_critical.py` (0 tokens outside a design run in every
-mode, a design run's draft and finalize phases within
-`FIXED_REQUEST_ALLOWANCE_TOKENS`, `scad_draft` within 150 tokens, all through the
-host's wrapper);
-`test_extension_agent_runs.py` (`stream_mode` forwarded and refused outside the
-subset, `delete_thread`); the frontend `services.test.ts` (`joinRunStream`),
-`surfaces.dom.test.ts`, `plugin-page.dom.test.tsx` (`layout: "full"`),
-`registry.test.ts` and `thread-search-query.test.ts` (unlisted threads); the e2e
-`frontend/tests/e2e/cad-design.spec.ts` (including a turn that saves no draft); and `backend/tests/test_bench_cad_eval.py`
-for the eval's design path.
+caps, a model Worker that fetches and imports nothing, no WebAssembly or code
+editor in the bundle; `files` — version folders, the outputs-only design
+folder, hostile `report.json` entries cut or capped, the check summaries;
+`outcomes`, `run-stream`) and its pytest suites (`test_store` with a file from
+the first release, `test_actions`, `test_middleware` through the host wrapper,
+`test_install`, `test_cad_design_registration`); `scripts/check_extension.py`
+on the package; `backend/tests/test_bundled_cad_design_extension.py` (snapshot
+equality, the install on every host, the shipped record, a record from before
+migration 79, the host mode the backend reads, and migration 78's cases);
+`test_cad_design_end_to_end.py` (the brief, and the setup line without `bash`,
+reach the model on a real design run; an ordinary chat, with or without a forged
+flag, gets nothing; the owner reads a version folder through the routes the page
+uses; the Ultracode brief arrives); `test_context_fit_critical.py`;
+`test_extension_isolation.py` and `test_extension_injection.py`;
+`test_extension_policy.py` (`sandbox_container` by provider mode);
+`test_extension_agent_runs.py`; `test_config_upgrade_script.py -k RetiredCadPluginRemoval`
+(migration 79); `test_sandbox_toggle.py` (`--image cad`);
+`test_sandbox_cad_image.py` (the pin, the tools and modules cadkit needs, exact
+requirements, the held base packages, the workflow's paths); the frontend
+`services.test.ts` (`joinRunStream`, `threadFiles` paths and bounded reads),
+`surfaces.dom.test.ts`, `plugin-page.dom.test.tsx` and
+`thread-search-query.test.ts`; `tests/skills/test_cadkit.py` and
+`tests/skills/test_cad_modeling.py`; the e2e
+`frontend/tests/e2e/cad-design.spec.ts` (a streamed run that shows a new
+version's bodies, views, checks, code and files; a turn without a version; an
+older version named in the prompt; the 390 px tabs; no WebGL; no container);
+and `docker/sandbox-cad/smoke.sh` in the image workflow.
